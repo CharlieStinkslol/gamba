@@ -36,15 +36,18 @@ export default function Admin() {
     setSaving(true);
     setMsg(null);
 
-    // Assuming a single-row settings table
+    // upsert so it works whether the row exists or not
     const { error } = await supabase
       .from('game_settings')
-      .update({
-        min_bet: form.minBet,
-        max_bet: form.maxBet,
-        house_edge: form.houseEdge,
-      })
-      .eq('id', 1);
+      .upsert(
+        {
+          id: 1,
+          min_bet: form.minBet,
+          max_bet: form.maxBet,
+          house_edge: form.houseEdge,
+        },
+        { onConflict: 'id' }
+      );
 
     if (error) {
       setMsg(error.message);
@@ -62,6 +65,7 @@ export default function Admin() {
   };
 
   const onClearSuggestions = async () => {
+    // delete all rows; the neq guard avoids empty filter warnings
     const { error } = await supabase.from('suggestions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (error) {
       setMsg(error.message);
