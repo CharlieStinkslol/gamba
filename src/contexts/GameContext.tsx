@@ -1,250 +1,93 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase, supabaseHelpers, localStorage_helpers, type GameBet as LocalGameBet, type GameSetting } from '../lib/supabase';
+import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
-interface GameBet {
+type GameSettings = {
+  minBet: number;
+  maxBet: number;
+  houseEdge: number;
+};
+
+type Suggestion = {
   id: string;
-  game: string;
-  betAmount: number;
-  winAmount: number;
-  multiplier: number;
-  timestamp: Date;
-  result: any;
-}
+  user_id: string | null;
+  text: string;
+  created_at: string;
+};
 
-interface GameStats {
-  totalBets: number;
-  totalWins: number;
-  totalLosses: number;
-  totalWagered: number;
-  totalWon: number;
-  biggestWin: number;
-  biggestLoss: number;
-  winRate: number;
-}
+type GameContextType = {
+  settings: GameSettings;
+  setSettings: (s: GameSettings) => void;
+  suggestions: Suggestion[];
+  addSuggestion: (text: string) => Promise<void>;
+  reloadSuggestions: () => Promise<void>;
+};
 
-interface GameSettings {
-  [gameName: string]: {
-    [key: string]: any;
-  };
-}
-
-interface GameContextType {
-  bets: GameBet[];
-  stats: GameStats;
-  seed: string;
-  gameSettings: GameSettings;
-  addBet: (bet: Omit<GameBet, 'id' | 'timestamp'>) => void;
-  clearHistory: () => void;
-  resetStats: () => void;
-  setSeed: (seed: string) => void;
-  generateSeededRandom: () => number;
-  saveGameSettings: (gameName: string, settings: any) => void;
-  loadGameSettings: (gameName: string) => any;
-}
+const defaultSettings: GameSettings = {
+  minBet: 1,
+  maxBet: 1000,
+  houseEdge: 0.01,
+};
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
-export const useGame = () => {
-  const context = useContext(GameContext);
-  if (context === undefined) {
-    throw new Error('useGame must be used within a GameProvider');
-  }
-  return context;
-};
-
-interface GameProviderProps {
-  children: ReactNode;
-}
-
-export const GameProvider: React.FC<GameProviderProps> = ({ children }) => {
-  const [bets, setBets] = useState<GameBet[]>([]);
-  const [seed, setSeedState] = useState<string>('');
-  const [seedCounter, setSeedCounter] = useState<number>(0);
-  const [gameSettings, setGameSettings] = useState<GameSettings>({});
-  const [useSupabase, setUseSupabase] = useState(false);
+export function GameProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const [settings, setSettings] = useState<GameSettings>(defaultSettings);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
-  // Check if Supabase is configured
+  // Pull game settings from DB (single row table e.g., "game_settings" with id=1)
   useEffect(() => {
-    const checkSupabaseConfig = () => {
-      const hasUrl = !!import.meta.env.VITE_SUPABASE_URL;
-      const hasKey = !!import.meta.env.VITE_SUPABASE_ANON_KEY;
-      setUseSupabase(hasUrl && hasKey);
+    let mounted = true;
+    (async () => {
+      const { data, error } = await supabase.from('game_settings').select('*').limit(1).single();
+      if (!mounted) return;
+      if (!error && data) {
+        setSettings({
+          minBet: data.min_bet ?? defaultSettings.minBet,
+          maxBet: data.max_bet ?? defaultSettings.maxBet,
+          houseEdge: data.house_edge ?? defaultSettings.houseEdge,
+        });
+      }
+    })();
+    return () => {
+      mounted = false;
     };
-    
-    checkSupabaseConfig();
   }, []);
 
+  const reloadSuggestions = async () => {
+    const { data, error } = await supabase
+      .from('suggestions')
+      .select('id,user_id,text,created_at')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (!error && data) setSuggestions(data as Suggestion[]);
+  };
+
   useEffect(() => {
-    if (user) {
-      loadUserBets();
-      loadUserGameSettings();
-    }
-    
-    // Load or generate seed
-    const savedSeed = localStorage.getItem('charlies-odds-seed');
-    if (savedSeed) {
-      setSeedState(savedSeed);
-    } else {
-      const newSeed = Math.random().toString(36).substring(2, 15);
-      setSeedState(newSeed);
-      localStorage.setItem('charlies-odds-seed', newSeed);
-    }
-  }, [user]);
+    reloadSuggestions();
+  }, []);
 
-  const loadUserBets = () => {
-    if (!user) return;
-
-    if (useSupabase) {
-      supabaseHelpers.getUserBets(user.id)
-        .then(userBets => {
-          const formattedBets: GameBet[] = userBets.map(bet => ({
-            id: bet.id,
-            game: bet.game,
-            betAmount: bet.bet_amount,
-            winAmount: bet.win_amount,
-            multiplier: bet.multiplier,
-            timestamp: new Date(bet.created_at),
-            result: bet.result
-          }));
-
-          setBets(formattedBets.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
-        }
-        )
-    }
-  }
-
-  const addBet = async (bet: Omit<GameBet, 'id' | 'timestamp'>) => {
-    if (!user) return;
-
-    const newBet: GameBet = {
-      ...bet,
-      id: Date.now().toString(),
-      timestamp: new Date(),
+  const addSuggestion = async (text: string) => {
+    const payload = {
+      text,
+      user_id: user?.id ?? null,
     };
-    
-    // Add to local state
-    const updatedBets = [newBet, ...bets].slice(0, 1000);
-    setBets(updatedBets);
-
-    // Save to Supabase if user has valid UUID, otherwise localStorage
-    if (useSupabase && isValidUUID(user.id)) {
-      const supabaseBet = {
-        user_id: user.id,
-        game: bet.game as any,
-        bet_amount: bet.betAmount,
-        win_amount: bet.winAmount,
-        multiplier: bet.multiplier,
-        result: bet.result
-      };
-      
-      const success = await supabaseHelpers.addBet(supabaseBet);
-      if (!success) {
-        console.warn('Failed to save bet to Supabase, falling back to localStorage');
-        // Fallback to localStorage if Supabase fails
-        saveToLocalStorage();
-      }
-    } else {
-      // Use localStorage for non-UUID users or when Supabase is not configured
-      saveToLocalStorage();
-    }
-    
-    function saveToLocalStorage() {
-      const allBets = localStorage_helpers.getBets();
-      const localBet: LocalGameBet = {
-        id: newBet.id,
-        user_id: user.id,
-        game: bet.game as any,
-        bet_amount: bet.betAmount,
-        win_amount: bet.winAmount,
-        multiplier: bet.multiplier,
-        result: bet.result,
-        created_at: newBet.timestamp.toISOString()
-      };
-      
-      allBets.push(localBet);
-      localStorage_helpers.saveBets(allBets);
-    }
+    const { error } = await supabase.from('suggestions').insert(payload);
+    if (error) throw error;
+    await reloadSuggestions();
   };
 
-  const clearHistory = () => {
-    setBets([]);
-    if (user) {
-      const allBets = localStorage_helpers.getBets();
-      const filteredBets = allBets.filter(bet => bet.user_id !== user.id);
-      localStorage_helpers.saveBets(filteredBets);
-    }
-  };
-
-  const resetStats = () => {
-    setBets([]);
-  };
-
-  const setSeed = (newSeed: string) => {
-    setSeedState(newSeed);
-    setSeedCounter(0);
-    localStorage.setItem('charlies-odds-seed', newSeed);
-  };
-
-  const generateSeededRandom = (): number => {
-    // Simple seeded random number generator
-    const seedStr = seed + seedCounter.toString();
-    setSeedCounter(prev => prev + 1);
-    
-    let hash = 0;
-    for (let i = 0; i < seedStr.length; i++) {
-      const char = seedStr.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    
-    return Math.abs(hash) / 2147483647;
-  };
-
-  const saveGameSettings = (gameName: string, settings: any) => {
-    if (!user) return;
-
-    if (useSupabase && isValidUUID(user.id)) {
-      supabaseHelpers.saveGameSettings(user.id, gameName, 'default', settings);
-    } else {
-      const updatedSettings = {
-        ...gameSettings,
-        [gameName]: settings
-      };
-      setGameSettings(updatedSettings);
-      localStorage.setItem(`charlies-odds-game-settings-${user.id}`, JSON.stringify(updatedSettings));
-    }
-  };
-
-  const loadGameSettings = (gameName: string) => {
-    return gameSettings[gameName] || {};
-  };
-
-  const stats: GameStats = {
-    totalBets: bets.length || 0,
-    totalWins: bets.filter(bet => bet.winAmount > bet.betAmount).length || 0,
-    totalLosses: bets.filter(bet => bet.winAmount < bet.betAmount).length || 0,
-    totalWagered: bets.reduce((sum, bet) => sum + bet.betAmount, 0) || 0,
-    totalWon: bets.reduce((sum, bet) => sum + bet.winAmount, 0) || 0,
-    biggestWin: bets.length ? Math.max(...bets.map(bet => bet.winAmount - bet.betAmount), 0) : 0,
-    biggestLoss: bets.length ? Math.min(...bets.map(bet => bet.winAmount - bet.betAmount), 0) : 0,
-    winRate: bets.length > 0 ? (bets.filter(bet => bet.winAmount > bet.betAmount).length / bets.length) * 100 : 0,
-  };
-
-  const value = {
-    bets,
-    stats,
-    seed,
-    gameSettings,
-    addBet,
-    clearHistory,
-    resetStats,
-    setSeed,
-    generateSeededRandom,
-    saveGameSettings,
-    loadGameSettings,
-  };
+  const value = useMemo<GameContextType>(
+    () => ({ settings, setSettings, suggestions, addSuggestion, reloadSuggestions }),
+    [settings, suggestions]
+  );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
-};
+}
+
+export function useGame() {
+  const ctx = useContext(GameContext);
+  if (!ctx) throw new Error('useGame must be used within GameProvider');
+  return ctx;
+}
