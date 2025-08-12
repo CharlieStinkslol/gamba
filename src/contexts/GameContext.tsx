@@ -31,6 +31,11 @@ const defaultSettings: GameSettings = {
 
 const SUGGESTION_TEXT_CANDIDATES = ['text', 'content', 'message', 'body', 'suggestion', 'description'] as const;
 
+// Settings key candidates we’ll accept when reading rows
+const MIN_CANDIDATES = ['min_bet', 'minBet', 'minimum', 'min'] as const;
+const MAX_CANDIDATES = ['max_bet', 'maxBet', 'maximum', 'max'] as const;
+const EDGE_CANDIDATES = ['house_edge', 'houseEdge', 'edge', 'rake', 'fee'] as const;
+
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export function GameProvider({ children }: { children: ReactNode }) {
@@ -40,7 +45,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   // remember which column name actually holds the suggestion text
   const textColRef = useRef<string | null>(null);
 
-  // --- Game settings load/seed (no 406 when table is empty)
+  // --- Game settings load/seed (robust to different column names and empty table)
   useEffect(() => {
     let mounted = true;
 
@@ -49,27 +54,30 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
       if (!mounted) return;
 
+      // If table has zero rows, maybeSingle() => data=null, error=null
       if (error) {
-        // silent: keep defaults if schema differs
+        // keep defaults silently if schema differs
         return;
       }
 
       if (!data) {
-        // seed a single row with id=1
-        const { error: seedErr } = await supabase
-          .from('game_settings')
-          .insert({ id: 1, min_bet: defaultSettings.minBet, max_bet: defaultSettings.maxBet, house_edge: defaultSettings.houseEdge });
-
-        if (!seedErr) {
-          setSettings(defaultSettings);
-        }
+        // No settings row yet — keep defaults in memory.
         return;
       }
 
+      // Map any matching key
+      const row = data as Record<string, any>;
+      const findNum = (keys: readonly string[], fallback: number) => {
+        for (const k of keys) {
+          if (k in row && row[k] != null && !Number.isNaN(Number(row[k]))) return Number(row[k]);
+        }
+        return fallback;
+      };
+
       setSettings({
-        minBet: Number((data as any).min_bet ?? defaultSettings.minBet),
-        maxBet: Number((data as any).max_bet ?? defaultSettings.maxBet),
-        houseEdge: Number((data as any).house_edge ?? defaultSettings.houseEdge),
+        minBet: findNum(MIN_CANDIDATES, defaultSettings.minBet),
+        maxBet: findNum(MAX_CANDIDATES, defaultSettings.maxBet),
+        houseEdge: findNum(EDGE_CANDIDATES, defaultSettings.houseEdge),
       });
     })();
 
@@ -101,11 +109,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
   function normalizeSuggestions(rows: any[], textKeyGuess?: string | null): Suggestion[] {
     const k = textKeyGuess ?? textColRef.current;
     return rows.map((r) => {
-      let textVal: string = '';
+      let textVal = '';
       if (k && typeof r[k] === 'string') {
         textVal = r[k];
       } else {
-        // scan common keys as a fallback
         for (const cand of SUGGESTION_TEXT_CANDIDATES) {
           if (typeof r[cand] === 'string') {
             textVal = r[cand];
@@ -123,7 +130,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }
 
   const reloadSuggestions = async () => {
-    // fetch all columns to avoid 400 on unknown 'text' column
     const { data, error } = await supabase
       .from('suggestions')
       .select('*')
@@ -143,9 +149,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   // Try inserting using whichever column exists
   async function insertSuggestionRow(text: string, userId: string | null) {
-    // 1) if we already detected a column, try that first
     const already = textColRef.current ? [textColRef.current] : [];
-    // 2) then try the common candidates in order, without duplicates
     const tryOrder = Array.from(new Set([...already, ...SUGGESTION_TEXT_CANDIDATES]));
 
     for (const col of tryOrder) {
@@ -158,27 +162,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
         return true;
       }
 
-      // If the error is "column does not exist" (42703), try next candidate
       const code = (error as any).code;
       if (code && String(code) !== '42703') {
-        // some other error, stop
         throw error;
       }
     }
 
-    // If all attempts failed with 42703, surface a clear error
-    throw new Error(
-      'Could not find a compatible text column in "suggestions". Tried: ' + tryOrder.join(', ')
-    );
+    throw new Error('Could not find a compatible text column in "suggestions".');
   }
 
   const addSuggestion = async (text: string) => {
     const t = text.trim();
     if (!t) return;
-
     const userId = user?.id ?? null;
 
-    // If we can detect the column by peeking, do it once
     if (!textColRef.current) {
       await detectSuggestionTextColumn();
     }
