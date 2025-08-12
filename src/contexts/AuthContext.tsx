@@ -1,618 +1,131 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase, supabaseHelpers, localStorage_helpers, type Profile, type UserStats } from '../lib/supabase';
+import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
 
-interface User {
+type AuthUser = {
   id: string;
-  username: string;
-  balance: number;
-  isAdmin: boolean;
-  createdAt: string;
-  level: number;
-  experience: number;
-  lastDailyBonus: string | null;
-  stats: {
-    totalBets: number;
-    totalWins: number;
-    totalLosses: number;
-    biggestWin: number;
-    biggestLoss: number;
-    totalWagered: number;
-    totalWon: number;
-  };
-  currency: 'USD' | 'GBP' | 'EUR' | 'BTC' | 'ETH' | 'LTC';
-}
+  email: string | null;
+  role?: 'user' | 'admin';
+};
 
-interface AuthContextType {
-  user: User | null;
-  isAuthenticated: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, password: string) => Promise<boolean>;
-  logout: () => void;
-  updateBalance: (amount: number) => void;
-  updateStats: (betAmount: number, winAmount: number) => void;
-  addExperience: (amount: number) => void;
-  claimDailyBonus: () => number;
-  getNextLevelRequirement: () => number;
-  getLevelRewards: (level: number) => { dailyBonus: number; title: string };
-  setCurrency: (currency: 'USD' | 'GBP' | 'EUR' | 'BTC' | 'ETH' | 'LTC') => void;
-  formatCurrency: (amount: number) => string;
+type AuthContextType = {
+  user: AuthUser | null;
   loading: boolean;
-}
+  error: string | null;
+  register: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
-
-// Utility function to validate if an ID is a UUID
-const isValidUUID = (id: string): boolean => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(id);
-};
-
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [useSupabase, setUseSupabase] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Check if Supabase is configured
+  // Pull a lightweight profile row (for role, etc.)
+  async function hydrateProfile(userId: string) {
+    // if you keep a "profiles" table with role
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id,email,role')
+      .eq('id', userId)
+      .single();
+
+    if (error) {
+      // fall back to auth user only
+      const { data: authData } = await supabase.auth.getUser();
+      const u = authData.user;
+      setUser(u ? { id: u.id, email: u.email ?? null } : null);
+      return;
+    }
+
+    setUser({
+      id: data.id,
+      email: data.email ?? null,
+      role: (data.role as 'user' | 'admin') ?? 'user',
+    });
+  }
+
+  // Initial session + listener (no localStorage — this only lives in memory)
   useEffect(() => {
-    const checkSupabaseConfig = () => {
-      const hasUrl = !!import.meta.env.VITE_SUPABASE_URL;
-      const hasKey = !!import.meta.env.VITE_SUPABASE_ANON_KEY;
-      setUseSupabase(hasUrl && hasKey);
-    };
-    
-    checkSupabaseConfig();
-  }, []);
+    let mounted = true;
 
-  // Initialize from localStorage
-  useEffect(() => {
-    const initializeUser = async () => {
-      if (useSupabase) {
-        try {
-          // Check for active Supabase session first
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            const profile = await supabaseHelpers.getProfile(session.user.id);
-            if (profile) {
-              const userStats = await supabaseHelpers.getUserStats(profile.id);
-              
-              const userObj: User = {
-                id: profile.id,
-                username: profile.username,
-                balance: profile.balance,
-                isAdmin: profile.is_admin,
-                level: profile.level,
-                experience: profile.experience,
-                lastDailyBonus: profile.last_daily_bonus,
-                currency: profile.currency,
-                createdAt: profile.created_at,
-                stats: {
-                  totalBets: userStats?.total_bets || 0,
-                  totalWins: userStats?.total_wins || 0,
-                  totalLosses: userStats?.total_losses || 0,
-                  biggestWin: userStats?.biggest_win || 0,
-                  biggestLoss: userStats?.biggest_loss || 0,
-                  totalWagered: userStats?.total_wagered || 0,
-                  totalWon: userStats?.total_won || 0
-                }
-              };
+    (async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      const u = authData.user;
 
-              setUser(userObj);
-              setIsAuthenticated(true);
-              setLoading(false);
-              return;
-            }
-          }
-          
-          // Check if there's a localStorage user ID that's incompatible with Supabase
-          const currentUserId = localStorage.getItem('charlies-odds-current-user');
-          if (currentUserId && !isValidUUID(currentUserId)) {
-            // Clear incompatible localStorage session
-            localStorage.removeItem('charlies-odds-current-user');
-            localStorage.removeItem('charlies-odds-username');
-            console.log('Cleared incompatible localStorage session (non-UUID ID)');
-          }
-        } catch (error) {
-          console.error('Error loading user from Supabase:', error);
-        }
+      if (!mounted) return;
+
+      if (u) {
+        await hydrateProfile(u.id);
       } else {
-        // Only use localStorage when Supabase is not configured
-        const currentUserId = localStorage.getItem('charlies-odds-current-user');
-        if (currentUserId) {
-          const users = localStorage_helpers.getUsers();
-          const foundUser = users.find(u => u.id === currentUserId);
-          if (foundUser) {
-            const userStats = localStorage_helpers.getUserStats();
-            const stats = userStats.find(s => s.user_id === foundUser.id);
-            
-            const userObj: User = {
-              id: foundUser.id,
-              username: foundUser.username,
-              balance: typeof foundUser.balance === 'number' ? foundUser.balance : 1000,
-              isAdmin: foundUser.is_admin,
-              level: typeof foundUser.level === 'number' ? foundUser.level : 1,
-              experience: typeof foundUser.experience === 'number' ? foundUser.experience : 0,
-              lastDailyBonus: foundUser.last_daily_bonus,
-              currency: foundUser.currency || 'USD',
-              createdAt: foundUser.created_at,
-              stats: {
-                totalBets: stats?.total_bets || 0,
-                totalWins: stats?.total_wins || 0,
-                totalLosses: stats?.total_losses || 0,
-                biggestWin: stats?.biggest_win || 0,
-                biggestLoss: stats?.biggest_loss || 0,
-                totalWagered: stats?.total_wagered || 0,
-                totalWon: stats?.total_won || 0
-              }
-            };
-
-            setUser(userObj);
-            setIsAuthenticated(true);
-          }
-        }
+        setUser(null);
       }
       setLoading(false);
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
+      if (session?.user) {
+        await hydrateProfile(session.user.id);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
     };
-    
-    initializeUser();
-  }, [useSupabase]);
+  }, []);
 
-  const login = async (username: string, password: string): Promise<boolean> => {
-    // Generate dummy email for Supabase auth (required by Supabase)
-    const dummyEmail = `${username}@test.com`;
-    
-    if (useSupabase) {
-      try {
-        const profile = await supabaseHelpers.authenticateUser(dummyEmail, password);
-        
-        if (!profile) {
-          console.error('Authentication failed');
-          return false;
-        }
-        
-        const userStats = await supabaseHelpers.getUserStats(profile.id);
-        
-        const userObj: User = {
-          id: profile.id,
-          username: profile.username,
-          balance: profile.balance,
-          isAdmin: profile.is_admin,
-          level: profile.level,
-          experience: profile.experience,
-          lastDailyBonus: profile.last_daily_bonus,
-          currency: profile.currency,
-          createdAt: profile.created_at,
-          stats: {
-            totalBets: userStats?.total_bets || 0,
-            totalWins: userStats?.total_wins || 0,
-            totalLosses: userStats?.total_losses || 0,
-            biggestWin: userStats?.biggest_win || 0,
-            biggestLoss: userStats?.biggest_loss || 0,
-            totalWagered: userStats?.total_wagered || 0,
-            totalWon: userStats?.total_won || 0
-          }
-        };
+  const register = async (email: string, password: string) => {
+    setError(null);
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      setError(error.message);
+      throw error;
+    }
+    // user may be null if confirmation is on — profile hydrate runs via listener
+  };
 
-        setUser(userObj);
-        setIsAuthenticated(true);
-        
-        // Store session in localStorage for persistence
-        localStorage.setItem('charlies-odds-current-user', profile.id);
-        localStorage.setItem('charlies-odds-username', username);
-        
-        return true;
-      } catch (error) {
-        console.error('Login error:', error);
-        return false;
-      }
-    } else {
-      // Fallback to localStorage
-      const users = localStorage_helpers.getUsers();
-      const foundUser = users.find(u => u.username === username);
-      
-      if (!foundUser) {
-        return false;
-      }
-
-      localStorage.setItem('charlies-odds-current-user', foundUser.id);
-      localStorage.setItem('charlies-odds-username', username);
-      
-      const userStats = localStorage_helpers.getUserStats();
-      const stats = userStats.find(s => s.user_id === foundUser.id);
-      
-      const userObj: User = {
-        id: foundUser.id,
-        username: foundUser.username,
-        balance: typeof foundUser.balance === 'number' ? foundUser.balance : 1000,
-        isAdmin: foundUser.is_admin,
-        level: typeof foundUser.level === 'number' ? foundUser.level : 1,
-        experience: typeof foundUser.experience === 'number' ? foundUser.experience : 0,
-        lastDailyBonus: foundUser.last_daily_bonus,
-        currency: foundUser.currency || 'USD',
-        createdAt: foundUser.created_at,
-        stats: {
-          totalBets: stats?.total_bets || 0,
-          totalWins: stats?.total_wins || 0,
-          totalLosses: stats?.total_losses || 0,
-          biggestWin: stats?.biggest_win || 0,
-          biggestLoss: stats?.biggest_loss || 0,
-          totalWagered: stats?.total_wagered || 0,
-          totalWon: stats?.total_won || 0
-        }
-      };
-
-      setUser(userObj);
-      setIsAuthenticated(true);
-      return true;
+  const login = async (email: string, password: string) => {
+    setError(null);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setError(error.message);
+      throw error;
     }
   };
 
-  const register = async (username: string, password: string): Promise<boolean> => {
-    // Generate dummy email for Supabase auth (required by Supabase)
-    const dummyEmail = `${username}@test.com`;
-    
-    if (useSupabase) {
-      try {
-        const result = await supabaseHelpers.registerUser(dummyEmail, password, username);
-        
-        if (result.success && result.user) {
-          const userObj: User = {
-            id: result.user.id,
-            username: result.user.username,
-            balance: result.user.balance,
-            isAdmin: result.user.is_admin,
-            level: result.user.level,
-            experience: result.user.experience,
-            lastDailyBonus: result.user.last_daily_bonus,
-            currency: result.user.currency,
-            createdAt: result.user.created_at,
-            stats: {
-              totalBets: 0,
-              totalWins: 0,
-              totalLosses: 0,
-              biggestWin: 0,
-              biggestLoss: 0,
-              totalWagered: 0,
-              totalWon: 0
-            }
-          };
-
-          setUser(userObj);
-          setIsAuthenticated(true);
-          
-          // Store session in localStorage for persistence
-          localStorage.setItem('charlies-odds-current-user', result.user.id);
-          localStorage.setItem('charlies-odds-username', username);
-          
-          return true;
-        } else {
-          console.error('Supabase registration failed:', result.message);
-          return false;
-        }
-      } catch (error) {
-        console.error('Supabase registration error:', error);
-        return false;
-      }
+  const logout = async () => {
+    setError(null);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setError(error.message);
+      throw error;
     }
-    else {
-      // localStorage registration when Supabase is not configured
-      const users = localStorage_helpers.getUsers();
-      
-      // Check if username already exists
-      if (users.find(u => u.username === username)) {
-        return false;
-      }
-
-      const newUser: Profile = {
-        id: Date.now().toString(),
-        username,
-        balance: 1000,
-        is_admin: false,
-        level: 1,
-        experience: 0,
-        last_daily_bonus: null,
-        currency: 'USD',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      const newStats: UserStats = {
-        id: Date.now().toString() + '_stats',
-        user_id: newUser.id,
-        total_bets: 0,
-        total_wins: 0,
-        total_losses: 0,
-        biggest_win: 0,
-        biggest_loss: 0,
-        total_wagered: 0,
-        total_won: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      users.push(newUser);
-      localStorage_helpers.saveUsers(users);
-      
-      const allStats = localStorage_helpers.getUserStats();
-      allStats.push(newStats);
-      localStorage_helpers.saveUserStats(allStats);
-
-      localStorage.setItem('charlies-odds-current-user', newUser.id);
-      localStorage.setItem('charlies-odds-username', username);
-
-      const userObj: User = {
-        id: newUser.id,
-        username: newUser.username,
-        balance: newUser.balance,
-        isAdmin: newUser.is_admin,
-        level: newUser.level,
-        experience: newUser.experience,
-        lastDailyBonus: newUser.last_daily_bonus,
-        currency: newUser.currency,
-        createdAt: newUser.created_at,
-        stats: {
-          totalBets: 0,
-          totalWins: 0,
-          totalLosses: 0,
-          biggestWin: 0,
-          biggestLoss: 0,
-          totalWagered: 0,
-          totalWon: 0
-        }
-      };
-
-      setUser(userObj);
-      setIsAuthenticated(true);
-      return true;
-    }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('charlies-odds-current-user');
-    localStorage.removeItem('charlies-odds-username');
     setUser(null);
-    setIsAuthenticated(false);
-  };
-  
-  const getNextLevelRequirement = (): number => {
-    if (!user) return 100;
-    return user.level * 100; // Each level requires level * 100 XP
   };
 
-  const getLevelRewards = (level: number) => {
-    const baseBonus = 25;
-    const bonusPerLevel = 5;
-    
-    const titles = [
-      'Novice Gambler', 'Casual Player', 'Regular Bettor', 'Experienced Player', 'Skilled Gambler',
-      'Expert Player', 'Master Bettor', 'High Roller', 'VIP Player', 'Elite Gambler',
-      'Legendary Player', 'Casino Royalty', 'Gambling Guru', 'Fortune Master', 'Luck Legend'
-    ];
-    
-    return {
-      dailyBonus: baseBonus + (level - 1) * bonusPerLevel,
-      title: titles[Math.min(level - 1, titles.length - 1)] || `Level ${level} Player`
-    };
+  const refreshProfile = async () => {
+    const { data } = await supabase.auth.getUser();
+    const u = data.user;
+    if (u) await hydrateProfile(u.id);
   };
 
-  const updateBalance = (amount: number) => {
-    if (!user) return;
-
-    const newBalance = Math.max(0, user.balance + amount);
-    
-    if (useSupabase && isValidUUID(user.id)) {
-      supabaseHelpers.updateProfile(user.id, { balance: newBalance });
-    } else {
-      const users = localStorage_helpers.getUsers();
-      const updatedUsers = users.map(u => 
-        u.id === user.id ? { ...u, balance: newBalance, updated_at: new Date().toISOString() } : u
-      );
-      localStorage_helpers.saveUsers(updatedUsers);
-    }
-
-    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-  };
-
-  const addExperience = (amount: number) => {
-    if (!user) return;
-
-    let newExperience = user.experience + amount;
-    let newLevel = user.level;
-    
-    // Check for level ups
-    while (newExperience >= getNextLevelRequirement()) {
-      newExperience -= getNextLevelRequirement();
-      newLevel++;
-    }
-    
-    if (useSupabase && isValidUUID(user.id)) {
-      supabaseHelpers.updateProfile(user.id, { 
-        experience: newExperience, 
-        level: newLevel 
-      });
-    } else {
-      const users = localStorage_helpers.getUsers();
-      const updatedUsers = users.map(u => 
-        u.id === user.id ? { 
-          ...u, 
-          experience: newExperience, 
-          level: newLevel,
-          updated_at: new Date().toISOString() 
-        } : u
-      );
-      localStorage_helpers.saveUsers(updatedUsers);
-    }
-
-    setUser(prev => prev ? { ...prev, experience: newExperience, level: newLevel } : null);
-  };
-
-  const claimDailyBonus = (): number => {
-    if (!user) return 0;
-
-    const today = new Date().toISOString().split('T')[0];
-    if (user.lastDailyBonus === today) return 0;
-
-    const levelRewards = getLevelRewards(user.level);
-    const bonusAmount = levelRewards.dailyBonus;
-    
-    if (useSupabase && isValidUUID(user.id)) {
-      supabaseHelpers.updateProfile(user.id, { 
-        balance: user.balance + bonusAmount,
-        last_daily_bonus: today
-      });
-    } else {
-      const users = localStorage_helpers.getUsers();
-      const updatedUsers = users.map(u => 
-        u.id === user.id ? { 
-          ...u, 
-          balance: u.balance + bonusAmount,
-          last_daily_bonus: today,
-          updated_at: new Date().toISOString() 
-        } : u
-      );
-      localStorage_helpers.saveUsers(updatedUsers);
-    }
-
-    setUser(prev => prev ? { 
-      ...prev, 
-      balance: prev.balance + bonusAmount, 
-      lastDailyBonus: today 
-    } : null);
-
-    return bonusAmount;
-  };
-
-  const updateStats = (betAmount: number, winAmount: number) => {
-    if (!user) return;
-
-    const profit = winAmount - betAmount;
-    const isWin = profit > 0;
-    
-    if (useSupabase && isValidUUID(user.id)) {
-      // Stats are automatically updated via database triggers when bets are inserted
-      // Just update local state for immediate UI feedback
-      setUser(prev => prev ? {
-        ...prev,
-        stats: {
-          totalBets: prev.stats.totalBets + 1,
-          totalWins: prev.stats.totalWins + (isWin ? 1 : 0),
-          totalLosses: prev.stats.totalLosses + (isWin ? 0 : 1),
-          biggestWin: Math.max(prev.stats.biggestWin, profit),
-          biggestLoss: Math.min(prev.stats.biggestLoss, profit),
-          totalWagered: prev.stats.totalWagered + betAmount,
-          totalWon: prev.stats.totalWon + winAmount
-        }
-      } : null);
-    } else {
-      const allStats = localStorage_helpers.getUserStats();
-      const updatedStats = allStats.map(s => {
-        if (s.user_id === user.id) {
-          return {
-            ...s,
-            total_bets: s.total_bets + 1,
-            total_wins: s.total_wins + (isWin ? 1 : 0),
-            total_losses: s.total_losses + (isWin ? 0 : 1),
-            biggest_win: Math.max(s.biggest_win, profit),
-            biggest_loss: Math.min(s.biggest_loss, profit),
-            total_wagered: s.total_wagered + betAmount,
-            total_won: s.total_won + winAmount,
-            updated_at: new Date().toISOString()
-          };
-        }
-        return s;
-      });
-      localStorage_helpers.saveUserStats(updatedStats);
-
-      // Update user stats in state
-      const updatedUserStats = updatedStats.find(s => s.user_id === user.id);
-      if (updatedUserStats) {
-        setUser(prev => prev ? {
-          ...prev,
-          stats: {
-            totalBets: updatedUserStats.total_bets,
-            totalWins: updatedUserStats.total_wins,
-            totalLosses: updatedUserStats.total_losses,
-            biggestWin: updatedUserStats.biggest_win,
-            biggestLoss: updatedUserStats.biggest_loss,
-            totalWagered: updatedUserStats.total_wagered,
-            totalWon: updatedUserStats.total_won
-          }
-        } : null);
-      }
-    }
-
-    // Add experience for betting
-    addExperience(Math.floor(betAmount / 10)); // 1 XP per $10 bet
-  };
-
-  const setCurrency = (currency: 'USD' | 'GBP' | 'EUR' | 'BTC' | 'ETH' | 'LTC') => {
-    if (!user) return;
-
-    if (useSupabase && isValidUUID(user.id)) {
-      supabaseHelpers.updateProfile(user.id, { currency });
-    } else {
-      const users = localStorage_helpers.getUsers();
-      const updatedUsers = users.map(u => 
-        u.id === user.id ? { ...u, currency, updated_at: new Date().toISOString() } : u
-      );
-      localStorage_helpers.saveUsers(updatedUsers);
-    }
-
-    setUser(prev => prev ? { ...prev, currency } : null);
-  };
-
-  const formatCurrency = (amount: number): string => {
-    // Safety check for undefined/null amount
-    if (amount === undefined || amount === null || isNaN(amount)) {
-      amount = 0;
-    }
-    
-    if (!user) return `$${amount.toFixed(2)}`;
-    
-    switch (user.currency) {
-      case 'GBP':
-        return `£${amount.toFixed(2)}`;
-      case 'EUR':
-        return `€${amount.toFixed(2)}`;
-      case 'BTC':
-        return `₿${(amount / 100000).toFixed(8)}`;
-      case 'ETH':
-        return `Ξ${(amount / 4000).toFixed(6)}`;
-      case 'LTC':
-        return `Ł${(amount / 100).toFixed(4)}`;
-      default:
-        return `$${amount.toFixed(2)}`;
-    }
-  };
-
-  const value = {
-    user,
-    isAuthenticated,
-    login,
-    register,
-    logout,
-    updateBalance,
-    updateStats,
-    addExperience,
-    claimDailyBonus,
-    getNextLevelRequirement,
-    getLevelRewards,
-    setCurrency,
-    formatCurrency,
-    loading,
-  };
+  const value = useMemo<AuthContextType>(
+    () => ({ user, loading, error, register, login, logout, refreshProfile }),
+    [user, loading, error]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+}
