@@ -1,5 +1,14 @@
-import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+// /src/contexts/AuthContext.tsx
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  ReactNode,
+} from 'react';
 import { supabase } from '../lib/supabase';
+import { registerUser, signInUser, signOutUser } from '../lib/supabase';
 
 type AuthUser = {
   id: string;
@@ -24,17 +33,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Pull a lightweight profile row (for role, etc.)
   async function hydrateProfile(userId: string) {
-    // if you keep a "profiles" table with role
     const { data, error } = await supabase
       .from('profiles')
       .select('id,email,role')
       .eq('id', userId)
       .single();
 
-    if (error) {
-      // fall back to auth user only
+    if (error || !data) {
       const { data: authData } = await supabase.auth.getUser();
       const u = authData.user;
       setUser(u ? { id: u.id, email: u.email ?? null } : null);
@@ -48,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  // Initial session + listener (no localStorage — this only lives in memory)
+  // Initial session + listener (memory only; no localStorage)
   useEffect(() => {
     let mounted = true;
 
@@ -81,33 +87,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Use helpers that clean/validate the email BEFORE calling Supabase
   const register = async (email: string, password: string) => {
     setError(null);
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      setError(error.message);
-      throw error;
+    try {
+      await registerUser(email, password);
+      // session may be null if email confirmations are enabled; hydration happens via auth listener
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not register.');
+      throw e;
     }
-    // user may be null if confirmation is on — profile hydrate runs via listener
   };
 
   const login = async (email: string, password: string) => {
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-      throw error;
+    try {
+      await signInUser(email, password);
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not sign in.');
+      throw e;
     }
   };
 
   const logout = async () => {
     setError(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      setError(error.message);
-      throw error;
+    try {
+      await signOutUser();
+      setUser(null);
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not sign out.');
+      throw e;
     }
-    setUser(null);
   };
 
   const refreshProfile = async () => {
