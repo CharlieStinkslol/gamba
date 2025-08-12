@@ -1,3 +1,4 @@
+// /src/pages/Admin.tsx
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useGame } from '../contexts/GameContext';
@@ -26,30 +27,27 @@ async function detectSettingsColumns(): Promise<ColMap | null> {
   if (min && max) {
     return { min, max, edge: edge ?? undefined };
   }
-  // Not enough info from rows
   return null;
 }
 
-async function tryUpsert(form: { minBet: number; maxBet: number; houseEdge: number }, cols?: ColMap) {
-  // Build a set of attempts: discovered columns (if any), then fallbacks
+async function tryUpsert(
+  form: { minBet: number; maxBet: number; houseEdge: number },
+  cols?: ColMap
+) {
   const attempts: ColMap[] = [];
 
   if (cols) attempts.push(cols);
 
-  // snake_case default
+  // common layouts to try
   attempts.push({ min: 'min_bet', max: 'max_bet', edge: 'house_edge' });
-  // camelCase
   attempts.push({ min: 'minBet', max: 'maxBet', edge: 'houseEdge' });
-  // some schemas don’t track edge at all
   attempts.push({ min: 'min_bet', max: 'max_bet' });
   attempts.push({ min: 'minBet', max: 'maxBet' });
-  // other common variants
   attempts.push({ min: 'minimum', max: 'maximum', edge: 'edge' });
   attempts.push({ min: 'min', max: 'max', edge: 'edge' });
   attempts.push({ min: 'minimum', max: 'maximum' });
   attempts.push({ min: 'min', max: 'max' });
 
-  // de-duplicate attempts by JSON key
   const uniqueAttempts = attempts.filter(
     (a, idx, arr) => arr.findIndex((b) => JSON.stringify(b) === JSON.stringify(a)) === idx
   );
@@ -65,15 +63,14 @@ async function tryUpsert(form: { minBet: number; maxBet: number; houseEdge: numb
     const { error } = await supabase.from('game_settings').upsert(payload, { onConflict: 'id' });
 
     if (!error) {
-      return a; // success with this column map
+      return a; // success
     }
 
     lastErr = error;
 
-    // If error is about missing column (PGRST204), try next map
-    if ((error as any).code !== 'PGRST204' && (error as any).code !== '42703') {
-      // different failure (RLS etc.), stop early
-      break;
+    const code = (error as any).code;
+    if (code !== 'PGRST204' && code !== '42703') {
+      break; // different failure (e.g., RLS)
     }
   }
 
@@ -113,15 +110,13 @@ export default function Admin() {
     setMsg(null);
 
     try {
-      // Try to discover columns from existing row (if any)
       const discovered = await detectSettingsColumns();
       const usedMap = await tryUpsert(form, discovered);
 
-      // Reflect saved values in context
       setSettings({
         minBet: form.minBet,
         maxBet: form.maxBet,
-        houseEdge: usedMap.edge ? form.houseEdge : settings.houseEdge, // if schema has no edge, keep prior in-memory value
+        houseEdge: usedMap.edge ? form.houseEdge : settings.houseEdge,
       });
       setMsg('Saved.');
     } catch (err: any) {
@@ -132,10 +127,70 @@ export default function Admin() {
   };
 
   const onClearSuggestions = async () => {
-    const { error } = await supabase.from('suggestions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    const { error } = await supabase
+      .from('suggestions')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
     if (error) {
       setMsg(error.message);
       return;
     }
     await reloadSuggestions();
-    setMsg
+    setMsg('Suggestions cleared.'); // <-- this line was previously dangling
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <h1 className="text-2xl font-semibold">Admin</h1>
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-medium">Game Settings</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <label className="flex flex-col">
+            <span className="text-sm">Min Bet</span>
+            <input
+              type="number"
+              value={form.minBet}
+              onChange={onChangeNum('minBet')}
+              className="border rounded px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col">
+            <span className="text-sm">Max Bet</span>
+            <input
+              type="number"
+              value={form.maxBet}
+              onChange={onChangeNum('maxBet')}
+              className="border rounded px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col">
+            <span className="text-sm">House Edge</span>
+            <input
+              type="number"
+              step="0.001"
+              value={form.houseEdge}
+              onChange={onChangeNum('houseEdge')}
+              className="border rounded px-3 py-2"
+            />
+          </label>
+        </div>
+        <button
+          onClick={onSave}
+          disabled={saving}
+          className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {msg && <p className="text-sm">{msg}</p>}
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-medium">Suggestions</h2>
+        <button onClick={onClearSuggestions} className="px-4 py-2 rounded border">
+          Clear All Suggestions
+        </button>
+      </section>
+    </div>
+  );
+}
