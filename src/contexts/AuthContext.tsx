@@ -188,6 +188,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('username', username)
         .single();
 
+        // Auto-login after successful registration
+        await hydrateProfile(authData.user.id);
+
       if (userError || !userData) {
         setError('Invalid username or password');
         return false;
