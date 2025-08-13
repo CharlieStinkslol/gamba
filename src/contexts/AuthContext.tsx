@@ -13,24 +13,7 @@ import { registerUser, signInUser, signOutUser } from '../lib/supabase';
 type AuthUser = {
   id: string;
   email: string | null;
-  username: string;
-  balance: number;
-  level: number;
-  experience: number;
-  currency: string;
-  isAdmin: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastDailyBonus: string | null;
-  stats: {
-    totalBets: number;
-    totalWins: number;
-    totalLosses: number;
-    totalWagered: number;
-    totalWon: number;
-    biggestWin: number;
-    biggestLoss: number;
-  };
+  role?: 'user' | 'admin';
 };
 
 type AuthContextType = {
