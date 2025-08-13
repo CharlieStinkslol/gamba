@@ -274,11 +274,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const newBalance = user.balance + amount;
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
     
-    // Update in database
+    // Update in database and wait for completion
     supabase
       .from('users')
       .update({ balance: newBalance })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error updating balance in database:', error);
+          // Revert local state if database update fails
+          setUser(prev => prev ? { ...prev, balance: user.balance } : null);
+        }
+      });
   };
 
   const updateStats = (betAmount: number, winAmount: number) => {
@@ -299,10 +306,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     setUser(prev => prev ? { ...prev, stats: newStats } : null);
     
-    // Update in database
+    // Update in database and wait for completion
     supabase
       .from('user_stats')
-      .update({
+      .upsert({
+        user_id: user.id,
         total_bets: newStats.totalBets,
         total_wins: newStats.totalWins,
         total_losses: newStats.totalLosses,
@@ -311,7 +319,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         biggest_win: newStats.biggestWin,
         biggest_loss: newStats.biggestLoss
       })
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error updating stats in database:', error);
+        }
+      });
   };
 
   const setCurrency = (currency: string) => {
