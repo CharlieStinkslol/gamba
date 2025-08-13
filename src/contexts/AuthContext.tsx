@@ -250,70 +250,134 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: user?.currency || 'USD',
-    }).format(amount);
+    if (!user) return '$0.00';
+    
+    const currencySymbols = {
+      USD: '$',
+      BTC: '₿',
+      ETH: 'Ξ',
+      LTC: 'Ł',
+      GBP: '£',
+      EUR: '€'
+    };
+    
+    const symbol = currencySymbols[user.currency as keyof typeof currencySymbols] || '$';
+    return `${symbol}${amount.toFixed(2)}`;
   };
 
   const updateBalance = (amount: number) => {
-    if (user) {
-      setUser({ ...user, balance: amount });
-    }
+    if (!user) return;
+    
+    const newBalance = user.balance + amount;
+    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
+    
+    // Update in database
+    supabase
+      .from('users')
+      .update({ balance: newBalance })
+      .eq('id', user.id);
   };
 
   const updateStats = (betAmount: number, winAmount: number) => {
-    if (user) {
-      const newStats = {
-        ...user.stats,
-        totalBets: user.stats.totalBets + 1,
-        totalWagered: user.stats.totalWagered + betAmount,
-        totalWon: user.stats.totalWon + winAmount,
-      };
-      
-      if (winAmount > 0) {
-        newStats.totalWins = user.stats.totalWins + 1;
-        if (winAmount > user.stats.biggestWin) {
-          newStats.biggestWin = winAmount;
-        }
-      } else {
-        newStats.totalLosses = user.stats.totalLosses + 1;
-        if (betAmount > user.stats.biggestLoss) {
-          newStats.biggestLoss = betAmount;
-        }
-      }
-      
-      setUser({ ...user, stats: newStats });
-    }
+    if (!user) return;
+    
+    const isWin = winAmount > betAmount;
+    const profit = winAmount - betAmount;
+    
+    const newStats = {
+      totalBets: user.stats.totalBets + 1,
+      totalWins: user.stats.totalWins + (isWin ? 1 : 0),
+      totalLosses: user.stats.totalLosses + (isWin ? 0 : 1),
+      totalWagered: user.stats.totalWagered + betAmount,
+      totalWon: user.stats.totalWon + winAmount,
+      biggestWin: Math.max(user.stats.biggestWin, profit),
+      biggestLoss: Math.min(user.stats.biggestLoss, profit)
+    };
+    
+    setUser(prev => prev ? { ...prev, stats: newStats } : null);
+    
+    // Update in database
+    supabase
+      .from('user_stats')
+      .update({
+        total_bets: newStats.totalBets,
+        total_wins: newStats.totalWins,
+        total_losses: newStats.totalLosses,
+        total_wagered: newStats.totalWagered,
+        total_won: newStats.totalWon,
+        biggest_win: newStats.biggestWin,
+        biggest_loss: newStats.biggestLoss
+      })
+      .eq('user_id', user.id);
   };
 
   const setCurrency = (currency: string) => {
-    if (user) {
-      setUser({ ...user, currency });
-    }
+    if (!user) return;
+    
+    setUser(prev => prev ? { ...prev, currency } : null);
+    
+    // Update in database
+    supabase
+      .from('users')
+      .update({ currency })
+      .eq('id', user.id);
   };
 
   const claimDailyBonus = () => {
-    const bonusAmount = 100;
-    if (user) {
-      setUser({ 
-        ...user, 
-        balance: user.balance + bonusAmount,
-        lastDailyBonus: new Date().toISOString()
-      });
-    }
+    if (!user) return 0;
+    
+    const today = new Date().toDateString();
+    if (user.lastDailyBonus === today) return 0;
+    
+    const levelRewards = getLevelRewards(user.level);
+    const bonusAmount = levelRewards.dailyBonus;
+    
+    updateBalance(bonusAmount);
+    setUser(prev => prev ? { ...prev, lastDailyBonus: today } : null);
+    
+    // Update in database
+    supabase
+      .from('users')
+      .update({ last_daily_bonus: today })
+      .eq('id', user.id);
+    
     return bonusAmount;
   };
 
   const getNextLevelRequirement = () => {
-    if (!user) return 0;
-    return user.level * 1000;
+    if (!user) return 100;
+    return user.level * 100;
   };
 
   const getLevelRewards = (level: number) => {
+    const baseBonus = 25;
+    const bonusIncrease = 20;
+    const dailyBonus = baseBonus + (level - 1) * bonusIncrease;
+    
+    const titles = [
+      'Novice Gambler',
+      'Casual Player', 
+      'Regular Gambler',
+      'Experienced Player',
+      'Skilled Gambler',
+      'Expert Player',
+      'Professional Gambler',
+      'High Roller',
+      'VIP Player',
+      'Elite Gambler',
+      'Master Player',
+      'Legendary Gambler',
+      'Casino Legend',
+      'Gambling Guru',
+      'Fortune Master',
+      'Luck Legend'
+    ];
+    
+    const titleIndex = Math.min(Math.floor((level - 1) / 3), titles.length - 1);
+    
     return {
-      title: `Level ${level} Player`,
-      dailyBonus: level * 50
+      title: titles[titleIndex],
+      dailyBonus
     };
   };
 
