@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Register = () => {
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -33,7 +34,7 @@ const Register = () => {
     }
 
     try {
-      await register(username, password);
+      await register(email, username, password);
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Registration failed');
@@ -67,6 +68,21 @@ const Register = () => {
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="Choose a username"
+                required
+                disabled={isLoading}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Email Address
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Enter your email"
                 required
                 disabled={isLoading}
               />

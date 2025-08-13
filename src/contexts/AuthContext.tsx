@@ -21,7 +21,7 @@ type AuthContextType = {
   loading: boolean;
   error: string | null;
   register: (email: string, password: string) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
@@ -88,10 +88,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Use helpers that clean/validate the email BEFORE calling Supabase
-  const register = async (email: string, password: string) => {
+  const register = async (email: string, username: string, password: string) => {
     setError(null);
     try {
-      await registerUser(email, password);
+      const { data: authData } = await registerUser(email, password);
+      
+      if (authData.user) {
+        // Create user profile in users table
+        const { error: userError } = await supabase
+          .from('users')
+          .insert({
+            id: authData.user.id,
+            username,
+            balance: 1000,
+            level: 1,
+            experience: 0,
+            currency: 'USD'
+          });
+
+        if (userError) {
+          throw userError;
+        }
+
+        // Create initial user stats record
+        const { error: statsError } = await supabase
+          .from('user_stats')
+          .insert({
+            user_id: authData.user.id,
+            total_bets: 0,
+            total_wins: 0,
+            total_losses: 0,
+            total_wagered: 0,
+            total_won: 0,
+            biggest_win: 0,
+            biggest_loss: 0
+          });
+
+        if (statsError) {
+          console.error('Error creating user stats:', statsError);
+        }
+
+        // Set user immediately after successful registration
+        setUser({
+          id: authData.user.id,
+          email: authData.user.email,
+          username,
+          balance: 1000,
+          level: 1,
+          experience: 0,
+          currency: 'USD',
+          isAdmin: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastDailyBonus: null,
+          stats: {
+            totalBets: 0,
+            totalWins: 0,
+            totalLosses: 0,
+            totalWagered: 0,
+            totalWon: 0,
+            biggestWin: 0,
+            biggestLoss: 0
+          }
+        });
+      }
       // session may be null if email confirmations are enabled; hydration happens via auth listener
     } catch (e: any) {
       setError(e?.message ?? 'Could not register.');
