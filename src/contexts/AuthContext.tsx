@@ -38,16 +38,9 @@ type AuthContextType = {
   loading: boolean;
   error: string | null;
   register: (email: string, password: string) => Promise<void>;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  formatCurrency: (amount: number) => string;
-  updateBalance: (amount: number) => void;
-  updateStats: (betAmount: number, winAmount: number) => void;
-  setCurrency: (currency: string) => void;
-  claimDailyBonus: () => number;
-  getNextLevelRequirement: () => number;
-  getLevelRewards: (level: number) => { title: string; dailyBonus: number };
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -111,8 +104,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     setUser(userObject);
-  }
-    });
   }
 
   // Initial session + listener (memory only; no localStorage)
@@ -201,18 +192,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Get user by username
-      const { data: userData, error: userError } = await supabase
+      // Get user by username to find their email
+      const { data: userCheck, error: userCheckError } = await supabase
         .from('users')
-        .select('*')
+        .select('id, username')
         .eq('username', username)
         .single();
 
-      if (userError || !userData) {
-        return false;
+      if (userCheckError) {
+        throw new Error('Username does not exist');
       }
       
-      // Generate the same email format used during registration
+      // Get the auth user's email to sign in
+      const { data: authUser, error: authError } = await supabase.auth.getUser();
+      
+      // We need to get the email from the auth.users table
+      // For now, we'll generate the same email format used during registration
       const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
       const userEmail = `${sanitizedUsername}@test.com`;
       
@@ -222,15 +217,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        return false;
+        throw new Error('Invalid username or password');
       }
-      
-      // Load user profile after successful login
-      await hydrateProfile(userData.id);
-      return true;
     } catch (e: any) {
       setError(e?.message ?? 'Could not sign in.');
-      return false;
+      throw e;
     }
   };
 
@@ -251,154 +242,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (u) await hydrateProfile(u.id);
   };
 
-  const formatCurrency = (amount: number) => {
-    if (!user) return '$0.00';
-    
-    const currencySymbols = {
-      USD: '$',
-      BTC: '₿',
-      ETH: 'Ξ',
-      LTC: 'Ł',
-      GBP: '£',
-      EUR: '€'
-    };
-    
-    const symbol = currencySymbols[user.currency as keyof typeof currencySymbols] || '$';
-    return `${symbol}${amount.toFixed(2)}`;
-  };
-
-  const updateBalance = (amount: number) => {
-    if (!user) return;
-    
-    const newBalance = user.balance + amount;
-    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ balance: newBalance })
-      .eq('id', user.id);
-  };
-
-  const updateStats = (betAmount: number, winAmount: number) => {
-    if (!user) return;
-    
-    const isWin = winAmount > betAmount;
-    const profit = winAmount - betAmount;
-    
-    const newStats = {
-      totalBets: user.stats.totalBets + 1,
-      totalWins: user.stats.totalWins + (isWin ? 1 : 0),
-      totalLosses: user.stats.totalLosses + (isWin ? 0 : 1),
-      totalWagered: user.stats.totalWagered + betAmount,
-      totalWon: user.stats.totalWon + winAmount,
-      biggestWin: Math.max(user.stats.biggestWin, profit),
-      biggestLoss: Math.min(user.stats.biggestLoss, profit)
-    };
-    
-    setUser(prev => prev ? { ...prev, stats: newStats } : null);
-    
-    // Update in database
-    supabase
-      .from('user_stats')
-      .update({
-        total_bets: newStats.totalBets,
-        total_wins: newStats.totalWins,
-        total_losses: newStats.totalLosses,
-        total_wagered: newStats.totalWagered,
-        total_won: newStats.totalWon,
-        biggest_win: newStats.biggestWin,
-        biggest_loss: newStats.biggestLoss
-      })
-      .eq('user_id', user.id);
-  };
-
-  const setCurrency = (currency: string) => {
-    if (!user) return;
-    
-    setUser(prev => prev ? { ...prev, currency } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ currency })
-      .eq('id', user.id);
-  };
-
-  const claimDailyBonus = () => {
-    if (!user) return 0;
-    
-    const today = new Date().toDateString();
-    if (user.lastDailyBonus === today) return 0;
-    
-    const levelRewards = getLevelRewards(user.level);
-    const bonusAmount = levelRewards.dailyBonus;
-    
-    updateBalance(bonusAmount);
-    setUser(prev => prev ? { ...prev, lastDailyBonus: today } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ last_daily_bonus: today })
-      .eq('id', user.id);
-    
-    return bonusAmount;
-  };
-
-  const getNextLevelRequirement = () => {
-    if (!user) return 100;
-    return user.level * 100;
-  };
-
-  const getLevelRewards = (level: number) => {
-    const baseBonus = 25;
-    const bonusIncrease = 20;
-    const dailyBonus = baseBonus + (level - 1) * bonusIncrease;
-    
-    const titles = [
-      'Novice Gambler',
-      'Casual Player', 
-      'Regular Gambler',
-      'Experienced Player',
-      'Skilled Gambler',
-      'Expert Player',
-      'Professional Gambler',
-      'High Roller',
-      'VIP Player',
-      'Elite Gambler',
-      'Master Player',
-      'Legendary Gambler',
-      'Casino Legend',
-      'Gambling Guru',
-      'Fortune Master',
-      'Luck Legend'
-    ];
-    
-    const titleIndex = Math.min(Math.floor((level - 1) / 3), titles.length - 1);
-    
-    return {
-      title: titles[titleIndex],
-      dailyBonus
-    };
-  };
   const value = useMemo<AuthContextType>(
-    () => ({ 
-      user, 
-      loading, 
-      error, 
-      register, 
-      login, 
-      logout, 
-      refreshProfile,
-      formatCurrency,
-      updateBalance,
-      updateStats,
-      setCurrency,
-      claimDailyBonus,
-      getNextLevelRequirement,
-      getLevelRewards
-    }),
+    () => ({ user, loading, error, register, login, logout, refreshProfile }),
     [user, loading, error]
   );
 
