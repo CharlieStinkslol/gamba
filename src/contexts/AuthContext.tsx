@@ -18,10 +18,6 @@ type AuthUser = {
   level: number;
   experience: number;
   currency: string;
-  isAdmin: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastDailyBonus: string | null;
   stats: {
     totalBets: number;
     totalWins: number;
@@ -37,116 +33,121 @@ type AuthContextType = {
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
-  register: (email: string, password: string) => Promise<void>;
+  register: (email: string, username: string, password: string) => Promise<boolean>;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   formatCurrency: (amount: number) => string;
-  updateBalance: (amount: number) => void;
-  updateStats: (betAmount: number, winAmount: number) => void;
-  setCurrency: (currency: string) => void;
-  claimDailyBonus: () => number;
-  getNextLevelRequirement: () => number;
-  getLevelRewards: (level: number) => { title: string; dailyBonus: number };
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export const useAuth = () => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+};
+
+async function fetchProfile(userId: string) {
+  // Fetch user profile
+  const { data: userRow, error: userErr } = await supabase
+    .from('users')
+    .select('id, username, balance, level, experience, currency')
+    .eq('id', userId)
+    .single();
+
+  if (userErr) throw userErr;
+
+  // Fetch user stats
+  const { data: statsRow, error: statsErr } = await supabase
+    .from('user_stats')
+    .select(
+      'total_bets, total_wins, total_losses, total_wagered, total_won, biggest_win, biggest_loss'
+    )
+    .eq('user_id', userId)
+    .single();
+
+  if (statsErr) throw statsErr;
+
+  const profile: AuthUser = {
+    id: userRow.id,
+    email: null, // you can load from auth if needed
+    username: userRow.username,
+    balance: userRow.balance,
+    level: userRow.level,
+    experience: userRow.experience,
+    currency: userRow.currency,
+    stats: {
+      totalBets: statsRow?.total_bets ?? 0,
+      totalWins: statsRow?.total_wins ?? 0,
+      totalLosses: statsRow?.total_losses ?? 0,
+      totalWagered: statsRow?.total_wagered ?? 0,
+      totalWon: statsRow?.total_won ?? 0,
+      biggestWin: statsRow?.biggest_win ?? 0,
+      biggestLoss: statsRow?.biggest_loss ?? 0,
+    },
+  };
+
+  return profile;
+}
+
+type ProviderProps = { children: ReactNode };
+
+export const AuthProvider = ({ children }: ProviderProps) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function hydrateProfile(userId: string) {
-    // Get user data from users table
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
+  const hydrateProfile = async (userId: string) => {
+    const profile = await fetchProfile(userId);
+    setUser(profile);
+  };
 
-    // Get user stats
-    const { data: statsData } = await supabase
-      .from('user_stats')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (userError || !userData) {
-      console.error('Error loading user profile:', userError);
-      setUser(null);
-      return;
-    }
-
-    // Set complete user object
-    const userObject = {
-      id: userData.id,
-      email: userData.email || null,
-      username: userData.username,
-      balance: userData.balance || 1000,
-      level: userData.level || 1,
-      experience: userData.experience || 0,
-      currency: userData.currency || 'USD',
-      isAdmin: userData.is_admin || false,
-      createdAt: userData.created_at,
-      updatedAt: userData.updated_at,
-      lastDailyBonus: userData.last_daily_bonus,
-      stats: statsData ? {
-        totalBets: statsData.total_bets || 0,
-        totalWins: statsData.total_wins || 0,
-        totalLosses: statsData.total_losses || 0,
-        totalWagered: statsData.total_wagered || 0,
-        totalWon: statsData.total_won || 0,
-        biggestWin: statsData.biggest_win || 0,
-        biggestLoss: statsData.biggest_loss || 0
-      } : {
-        totalBets: 0,
-        totalWins: 0,
-        totalLosses: 0,
-        totalWagered: 0,
-        totalWon: 0,
-        biggestWin: 0,
-        biggestLoss: 0
-      }
-    };
-
-    setUser(userObject);
-  }
-
-  // Initial session + listener (memory only; no localStorage)
+  // On mount, try to load the current auth user and profile
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
 
     (async () => {
-      const { data: authData } = await supabase.auth.getUser();
-      const u = authData.user;
-
-      if (!mounted) return;
-
-      if (u) {
-        await hydrateProfile(u.id);
-      } else {
-        setUser(null);
+      try {
+        const { data, error: getErr } = await supabase.auth.getUser();
+        if (getErr) {
+          // eslint-disable-next-line no-console
+          console.error('getUser error:', getErr);
+          return;
+        }
+        const authUser = data?.user;
+        if (authUser && isMounted) {
+          await hydrateProfile(authUser.id);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Auth init failed', e);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-      setLoading(false);
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
-      if (session?.user) {
-        await hydrateProfile(session.user.id);
-      } else {
+    // Listen to auth state changes to keep context in sync
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT' || !session?.user) {
         setUser(null);
+        return;
+      }
+      // Signed in / token refreshed
+      try {
+        await hydrateProfile(session.user.id);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Hydrate on auth change failed:', e);
       }
     });
 
     return () => {
-      mounted = false;
+      isMounted = false;
       sub.subscription.unsubscribe();
     };
   }, []);
 
-  // Use helpers that clean/validate the email BEFORE calling Supabase
   const register = async (email: string, username: string, password: string) => {
     setError(null);
     try {
@@ -166,10 +167,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
 
         if (userError) {
+          // eslint-disable-next-line no-console
+          console.error('Error creating user profile:', userError);
           throw userError;
         }
 
-        // Create initial user stats record
+        // Create initial stats row
         const { error: statsError } = await supabase
           .from('user_stats')
           .insert({
@@ -190,47 +193,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Load the complete user profile after creation
         await hydrateProfile(authData.user.id);
       } else {
-        throw new Error('Registration failed - no user data returned');
+        setError('Registration failed.');
+        return false;
       }
+
+      return true;
     } catch (e: any) {
-      console.error('Registration error:', e);
-      setError(e?.message ?? 'Could not register.');
-      throw e;
+      setError(e?.message ?? 'Registration failed.');
+      return false;
     }
   };
 
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Get user by username
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('username', username)
-        .single();
-
-      if (userError || !userData) {
-        return false;
-      }
-      
-      // Generate the same email format used during registration
+      // Sign in first using the derived email (no pre-query against RLS-protected tables)
       const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
       const userEmail = `${sanitizedUsername}@test.com`;
-      
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: userEmail,
         password,
       });
 
-      if (error) {
+      if (error || !data?.user) {
         return false;
       }
-      
-      // Load user profile after successful login
-      await hydrateProfile(userData.id);
+
+      // Now that we're authenticated, fetch the profile by auth user id
+      await hydrateProfile(data.user.id);
+
+      // At this point, `user` state is populated. Your UI can redirect.
+      // Return true so the login form can navigate, e.g., to "/account".
       return true;
     } catch (e: any) {
-      setError(e?.message ?? 'Could not sign in.');
+      setError(e?.message ?? 'Login failed.');
       return false;
     }
   };
@@ -255,160 +252,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const formatCurrency = (amount: number) => {
     if (!user) return '$0.00';
     
-    const currencySymbols = {
-      USD: '$',
-      BTC: '₿',
-      ETH: 'Ξ',
-      LTC: 'Ł',
-      GBP: '£',
-      EUR: '€'
-    };
-    
-    const symbol = currencySymbols[user.currency as keyof typeof currencySymbols] || '$';
-    return `${symbol}${amount.toFixed(2)}`;
-  };
-
-  const updateBalance = (amount: number) => {
-    if (!user) return;
-    
-    const newBalance = user.balance + amount;
-    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ balance: newBalance })
-      .eq('id', user.id);
-  };
-
-  const updateStats = (betAmount: number, winAmount: number) => {
-    if (!user) return;
-    
-    const isWin = winAmount > betAmount;
-    const profit = winAmount - betAmount;
-    
-    const newStats = {
-      totalBets: user.stats.totalBets + 1,
-      totalWins: user.stats.totalWins + (isWin ? 1 : 0),
-      totalLosses: user.stats.totalLosses + (isWin ? 0 : 1),
-      totalWagered: user.stats.totalWagered + betAmount,
-      totalWon: user.stats.totalWon + winAmount,
-      biggestWin: Math.max(user.stats.biggestWin, profit),
-      biggestLoss: Math.min(user.stats.biggestLoss, profit)
-    };
-    
-    setUser(prev => prev ? { ...prev, stats: newStats } : null);
-    
-    // Update in database
-    supabase
-      .from('user_stats')
-      .update({
-        total_bets: newStats.totalBets,
-        total_wins: newStats.totalWins,
-        total_losses: newStats.totalLosses,
-        total_wagered: newStats.totalWagered,
-        total_won: newStats.totalWon,
-        biggest_win: newStats.biggestWin,
-        biggest_loss: newStats.biggestLoss
-      })
-      .eq('user_id', user.id);
-  };
-
-  const setCurrency = (currency: string) => {
-    if (!user) return;
-    
-    setUser(prev => prev ? { ...prev, currency } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ currency })
-      .eq('id', user.id);
-  };
-
-  const claimDailyBonus = () => {
-    if (!user) return 0;
-    
-    const today = new Date().toDateString();
-    if (user.lastDailyBonus === today) return 0;
-    
-    const levelRewards = getLevelRewards(user.level);
-    const bonusAmount = levelRewards.dailyBonus;
-    
-    updateBalance(bonusAmount);
-    setUser(prev => prev ? { ...prev, lastDailyBonus: today } : null);
-    
-    // Update in database
-    supabase
-      .from('users')
-      .update({ last_daily_bonus: today })
-      .eq('id', user.id);
-    
-    return bonusAmount;
-  };
-
-  const getNextLevelRequirement = () => {
-    if (!user) return 100;
-    return user.level * 100;
-  };
-
-  const getLevelRewards = (level: number) => {
-    const baseBonus = 25;
-    const bonusIncrease = 20;
-    const dailyBonus = baseBonus + (level - 1) * bonusIncrease;
-    
-    const titles = [
-      'Novice Gambler',
-      'Casual Player', 
-      'Regular Gambler',
-      'Experienced Player',
-      'Skilled Gambler',
-      'Expert Player',
-      'Professional Gambler',
-      'High Roller',
-      'VIP Player',
-      'Elite Gambler',
-      'Master Player',
-      'Legendary Gambler',
-      'Casino Legend',
-      'Gambling Guru',
-      'Fortune Master',
-      'Luck Legend'
-    ];
-    
-    const titleIndex = Math.min(Math.floor((level - 1) / 3), titles.length - 1);
-    
-    return {
-      title: titles[titleIndex],
-      dailyBonus
-    };
+    const currency = user.currency || 'USD';
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    } catch {
+      return `$${amount.toFixed(2)}`;
+    }
   };
 
   const value = useMemo<AuthContextType>(
-    () => ({ 
-      user, 
-      loading, 
-      error, 
-      register, 
-      login, 
-      logout, 
+    () => ({
+      user,
+      loading,
+      error,
+      register,
+      login,
+      logout,
       refreshProfile,
-      formatCurrency,
-      updateBalance,
-      updateStats,
-      setCurrency,
-      claimDailyBonus,
-      getNextLevelRequirement,
-      getLevelRewards
+      formatCurrency
     }),
     [user, loading, error]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
-}
+};
