@@ -98,11 +98,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw e;
     }
   };
-
-  const login = async (email: string, password: string) => {
+            id: authData.user.id,
+  const login = async (username: string, password: string) => {
     setError(null);
     try {
-      await signInUser(email, password);
+      // Generate dummy email for Supabase auth
+      const dummyEmail = `${username}@test.com`;
+      
+      // First check if username exists in our users table
+      const { data: userCheck, error: userCheckError } = await supabase
+        .from('users')
+        .select('id, username')
+        .eq('username', username)
+        .single();
+
+        // Create initial user stats record
+        const { error: statsError } = await supabase
+      }
+
+            user_id: authData.user.id,
+      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: dummyEmail,
+        password,
+      });
+
+      if (authError) {
+        if (authError.message.includes('email_address_invalid')) {
+          throw new Error('Invalid username or password');
+          level: 1,
+          experience: 0,
+          currency: 'USD',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastDailyBonus: null,
+          stats: {
+            totalBets: 0,
+            totalWins: 0,
+            totalLosses: 0,
+            totalWagered: 0,
+            totalWon: 0,
+            biggestWin: 0,
+            biggestLoss: 0
+          }
+        });
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Could not sign in.');
       throw e;
