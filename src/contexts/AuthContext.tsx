@@ -113,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
 
       if (userCheckError) {
-        // User doesn't exist, create new account
+        // User doesn't exist, create new user
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: dummyEmail,
           password,
@@ -126,20 +126,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw authError;
         }
 
-        if (authData.user) {
-          // Create initial user stats record
-          const { error: statsError } = await supabase
-            .from('user_stats')
-            .insert({
-              user_id: authData.user.id,
-            });
-
-          // Set the user immediately with the created profile data
-          setUser({
+        // Create user record
+        const { error: userError } = await supabase
+          .from('users')
+          .insert({
             id: authData.user.id,
             username,
             balance: 1000,
-            isAdmin: false,
             level: 1,
             experience: 0,
             currency: 'USD',
@@ -156,6 +149,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               biggestLoss: 0
             }
           });
+
+        if (userError) {
+          throw userError;
+        }
+
+        // Create initial user stats record
+        const { error: statsError } = await supabase
+          .from('user_stats')
+          .insert({
+            user_id: authData.user.id,
+            total_bets: 0,
+            total_wins: 0,
+            total_losses: 0,
+            total_wagered: 0,
+            total_won: 0,
+            biggest_win: 0,
+            biggest_loss: 0
+          });
+
+        if (statsError) {
+          console.error('Error creating user stats:', statsError);
         }
       } else {
         // User exists, try to sign in
