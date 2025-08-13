@@ -13,7 +13,24 @@ import { registerUser, signInUser, signOutUser } from '../lib/supabase';
 type AuthUser = {
   id: string;
   email: string | null;
-  role?: 'user' | 'admin';
+  username: string;
+  balance: number;
+  level: number;
+  experience: number;
+  currency: string;
+  isAdmin: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastDailyBonus: string | null;
+  stats: {
+    totalBets: number;
+    totalWins: number;
+    totalLosses: number;
+    totalWagered: number;
+    totalWon: number;
+    biggestWin: number;
+    biggestLoss: number;
+  };
 };
 
 type AuthContextType = {
@@ -21,9 +38,16 @@ type AuthContextType = {
   loading: boolean;
   error: string | null;
   register: (email: string, password: string) => Promise<void>;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  formatCurrency: (amount: number) => string;
+  updateBalance: (amount: number) => void;
+  updateStats: (betAmount: number, winAmount: number) => void;
+  setCurrency: (currency: string) => void;
+  claimDailyBonus: () => number;
+  getNextLevelRequirement: () => number;
+  getLevelRewards: (level: number) => { title: string; dailyBonus: number };
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -225,8 +249,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (u) await hydrateProfile(u.id);
   };
 
+  const formatCurrency = (amount: number) => {
+    return `$${amount.toFixed(2)}`;
+  };
+
+  const updateBalance = (amount: number) => {
+    if (user) {
+      setUser({ ...user, balance: amount });
+    }
+  };
+
+  const updateStats = (betAmount: number, winAmount: number) => {
+    if (user) {
+      const newStats = {
+        ...user.stats,
+        totalBets: user.stats.totalBets + 1,
+        totalWagered: user.stats.totalWagered + betAmount,
+        totalWon: user.stats.totalWon + winAmount,
+        totalWins: winAmount > 0 ? user.stats.totalWins + 1 : user.stats.totalWins,
+        totalLosses: winAmount === 0 ? user.stats.totalLosses + 1 : user.stats.totalLosses,
+        biggestWin: Math.max(user.stats.biggestWin, winAmount),
+        biggestLoss: winAmount === 0 ? Math.max(user.stats.biggestLoss, betAmount) : user.stats.biggestLoss
+      };
+      setUser({ ...user, stats: newStats });
+    }
+  };
+
+  const setCurrency = (currency: string) => {
+    if (user) {
+      setUser({ ...user, currency });
+    }
+  };
+
+  const claimDailyBonus = () => {
+    return 100;
+  };
+
+  const getNextLevelRequirement = () => {
+    return 1000;
+  };
+
+  const getLevelRewards = (level: number) => {
+    return { title: `Level ${level}`, dailyBonus: level * 10 };
+  };
+
   const value = useMemo<AuthContextType>(
-    () => ({ user, loading, error, register, login, logout, refreshProfile }),
+    () => ({ 
+      user, 
+      loading, 
+      error, 
+      register, 
+      login, 
+      logout, 
+      refreshProfile,
+      formatCurrency,
+      updateBalance,
+      updateStats,
+      setCurrency,
+      claimDailyBonus,
+      getNextLevelRequirement,
+      getLevelRewards
+    }),
     [user, loading, error]
   );
 
