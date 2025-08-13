@@ -168,27 +168,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userError) {
           throw userError;
         }
-
-        // Create initial user stats record
-        const { error: statsError } = await supabase
-          .from('user_stats')
-          .insert({
-            user_id: authData.user.id,
-            total_bets: 0,
-            total_wins: 0,
-            total_losses: 0,
-            total_wagered: 0,
-            total_won: 0,
-            biggest_win: 0,
-            biggest_loss: 0
-          });
-
-        if (statsError) {
-          console.error('Error creating user stats:', statsError);
-        }
-
-        // Load the complete user profile after creation
-        await hydrateProfile(authData.user.id);
       } else {
         throw new Error('Registration failed - no user data returned');
       }
