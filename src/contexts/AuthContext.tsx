@@ -162,12 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Generate dummy email for Supabase auth
-      // Generate a valid email format that Supabase will accept
-      const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const dummyEmail = `${sanitizedUsername}${Date.now()}@test.com`;
-      
-      // First check if username exists in our users table
+      // Get user by username to find their email
       const { data: userCheck, error: userCheckError } = await supabase
         .from('users')
         .select('id, username')
@@ -175,77 +170,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
 
       if (userCheckError) {
-        // User doesn't exist, create new user
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: dummyEmail,
-          password,
-        });
+        throw new Error('Username does not exist');
+      }
+      
+      // Get the auth user's email to sign in
+      const { data: authUser, error: authError } = await supabase.auth.getUser();
+      
+      // We need to get the email from the auth.users table
+      // For now, we'll generate the same email format used during registration
+      const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const userEmail = `${sanitizedUsername}@test.com`;
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
 
-        if (authError) {
-          if (authError.message.includes('email_address_invalid')) {
-            throw new Error('Invalid username or password');
-          }
-          throw authError;
-        }
-
-        // Create user record
-        const { error: userError } = await supabase
-          .from('users')
-          .insert({
-            id: authData.user.id,
-            username,
-            balance: 1000,
-            level: 1,
-            experience: 0,
-            currency: 'USD',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            lastDailyBonus: null,
-            stats: {
-              totalBets: 0,
-              totalWins: 0,
-              totalLosses: 0,
-              totalWagered: 0,
-              totalWon: 0,
-              biggestWin: 0,
-              biggestLoss: 0
-            }
-          });
-
-        if (userError) {
-          throw userError;
-        }
-
-        // Create initial user stats record
-        const { error: statsError } = await supabase
-          .from('user_stats')
-          .insert({
-            user_id: authData.user.id,
-            total_bets: 0,
-            total_wins: 0,
-            total_losses: 0,
-            total_wagered: 0,
-            total_won: 0,
-            biggest_win: 0,
-            biggest_loss: 0
-          });
-
-        if (statsError) {
-          console.error('Error creating user stats:', statsError);
-        }
-      } else {
-        // User exists, try to sign in
-        const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const dummyEmail = `${sanitizedUsername}${Date.now()}@test.com`;
-        
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: dummyEmail,
-          password,
-        });
-
-        if (error) {
-          throw new Error('Invalid username or password');
-        }
+      if (error) {
+        throw new Error('Invalid username or password');
       }
     } catch (e: any) {
       setError(e?.message ?? 'Could not sign in.');
