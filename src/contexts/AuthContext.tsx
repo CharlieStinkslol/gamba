@@ -181,10 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // First check if user exists with this username
+      // Simple username/password check against users table
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('id, username')
+        .select('*')
         .eq('username', username)
         .single();
 
@@ -193,13 +193,353 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      // Generate email from username for Supabase auth
-      const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const userEmail = `${sanitizedUsername}@test.com`;
+      // For demo purposes, we'll just check if password matches a simple hash
+      // In a real app, you'd use proper password hashing
+      const expectedPassword = `${username}123`; // Simple demo password
+      if (password !== expectedPassword) {
+        setError('Invalid username or password');
+        return false;
+      }
 
-      // Try to sign in with Supabase auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: userEmail,
+      // Get user stats
+      const { data: statsData } = await supabase
+        .from('user_stats')
+        .select('*')
+        .eq('user_id', userData.id)
+        .maybeSingle();
+
+      // Set complete user object
+      const userObject = {
+        id: userData.id,
+        email: userData.email || null,
+        username: userData.username,
+        balance: userData.balance || 1000,
+        level: userData.level || 1,
+        experience: userData.experience || 0,
+        currency: userData.currency || 'USD',
+        isAdmin: userData.is_admin || false,
+        createdAt: userData.created_at,
+        updatedAt: userData.updated_at,
+        lastDailyBonus: userData.last_daily_bonus,
+        stats: statsData ? {
+          totalBets: statsData.total_bets || 0,
+          totalWins: statsData.total_wins || 0,
+          totalLosses: statsData.total_losses || 0,
+          totalWagered: statsData.total_wagered || 0,
+          totalWon: statsData.total_won || 0,
+          biggestWin: statsData.biggest_win || 0,
+          biggestLoss: statsData.biggest_loss || 0
+        } : {
+          totalBets: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWagered: 0,
+          totalWon: 0,
+          biggestWin: 0,
+          biggestLoss: 0
+        }
+      };
+
+      setUser(userObject);
+      return true;
+    } catch (e: any) {
+      console.error('Login error:', e);
+      setError('Login failed. Please try again.');
+      return false;
+    }
+  };
+
+  const register = async (email: string, username: string, password: string) => {
+    setError(null);
+    try {
+      // Generate a unique ID for the user
+      const userId = crypto.randomUUID();
+      
+      // Create user profile in users table
+      const { error: userError } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          username,
+          email,
+          balance: 1000,
+          level: 1,
+          experience: 0,
+          currency: 'USD'
+        });
+
+      if (userError) {
+        throw userError;
+      }
+
+      // Create initial user stats
+      const { error: statsError } = await supabase
+        .from('user_stats')
+        .insert({
+          user_id: userId,
+          total_bets: 0,
+          total_wins: 0,
+          total_losses: 0,
+          total_wagered: 0,
+          total_won: 0,
+          biggest_win: 0,
+          biggest_loss: 0
+        });
+
+      if (statsError) {
+        console.error('Error creating user stats:', statsError);
+        throw statsError;
+      }
+
+      // Set user object after successful registration
+      const userObject = {
+        id: userId,
+        email,
+        username,
+        balance: 1000,
+        level: 1,
+        experience: 0,
+        currency: 'USD',
+        isAdmin: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastDailyBonus: null,
+        stats: {
+          totalBets: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWagered: 0,
+          totalWon: 0,
+          biggestWin: 0,
+          biggestLoss: 0
+        }
+      };
+
+      setUser(userObject);
+    } catch (e: any) {
+      console.error('Registration error:', e);
+      setError(e?.message ?? 'Could not register.');
+      throw e;
+    }
+  };
+
+  const logout = async () => {
+    setError(null);
+    try {
+      setUser(null);
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not sign out.');
+      throw e;
+    }
+  };
+
+  const refreshProfile = async () => {
+    if (!user) return;
+    
+    // Reload user data from database
+    const { data: userData } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    const { data: statsData } = await supabase
+      .from('user_stats')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (userData) {
+      setUser({
+        ...user,
+        balance: userData.balance,
+        level: userData.level,
+        experience: userData.experience,
+        stats: statsData ? {
+          totalBets: statsData.total_bets || 0,
+          totalWins: statsData.total_wins || 0,
+          totalLosses: statsData.total_losses || 0,
+          totalWagered: statsData.total_wagered || 0,
+          totalWon: statsData.total_won || 0,
+          biggestWin: statsData.biggest_win || 0,
+          biggestLoss: statsData.biggest_loss || 0
+        } : user.stats
+      });
+    }
+  };
+
+  // Remove the hydrateProfile function and auth state listener
+  useEffect(() => {
+    setLoading(false);
+  }, []);
+
+  const formatCurrency = (amount: number) => {
+    if (!user) return '$0.00';
+    
+    const currencySymbols = {
+      USD: '$',
+      BTC: '₿',
+      ETH: 'Ξ',
+      LTC: 'Ł',
+      GBP: '£',
+      EUR: '€'
+    };
+    
+    const symbol = currencySymbols[user.currency as keyof typeof currencySymbols] || '$';
+    return `${symbol}${amount.toFixed(2)}`;
+  };
+
+  const updateBalance = async (amount: number) => {
+    if (!user) return;
+    
+    const newBalance = user.balance + amount;
+    
+    // Update local state immediately
+    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
+    
+    // Update in database
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ balance: newBalance })
+        .eq('id', user.id);
+      
+      if (error) {
+        console.error('Error updating balance in database:', error);
+        // Revert local state if database update fails
+        setUser(prev => prev ? { ...prev, balance: user.balance } : null);
+      }
+    } catch (error) {
+      console.error('Error updating balance:', error);
+      // Revert local state if database update fails
+      setUser(prev => prev ? { ...prev, balance: user.balance } : null);
+    }
+  };
+
+  const updateStats = async (betAmount: number, winAmount: number) => {
+    if (!user) return;
+    
+    const isWin = winAmount > betAmount;
+    const profit = winAmount - betAmount;
+    
+    const newStats = {
+      totalBets: user.stats.totalBets + 1,
+      totalWins: user.stats.totalWins + (isWin ? 1 : 0),
+      totalLosses: user.stats.totalLosses + (isWin ? 0 : 1),
+      totalWagered: user.stats.totalWagered + betAmount,
+      totalWon: user.stats.totalWon + winAmount,
+      biggestWin: Math.max(user.stats.biggestWin, profit),
+      biggestLoss: Math.min(user.stats.biggestLoss, profit)
+    };
+    
+    // Update local state immediately
+    setUser(prev => prev ? { ...prev, stats: newStats } : null);
+    
+    // Update in database
+    try {
+      const { error } = await supabase
+        .from('user_stats')
+        .upsert({
+          user_id: user.id,
+          total_bets: newStats.totalBets,
+          total_wins: newStats.totalWins,
+          total_losses: newStats.totalLosses,
+          total_wagered: newStats.totalWagered,
+          total_won: newStats.totalWon,
+          biggest_win: newStats.biggestWin,
+          biggest_loss: newStats.biggestLoss
+        })
+        .eq('user_id', user.id);
+      
+      if (error) {
+        console.error('Error updating stats in database:', error);
+        // Revert local state if database update fails
+        setUser(prev => prev ? { ...prev, stats: user.stats } : null);
+      }
+    } catch (error) {
+      console.error('Error updating stats:', error);
+      // Revert local state if database update fails
+      setUser(prev => prev ? { ...prev, stats: user.stats } : null);
+    }
+  };
+
+  const setCurrency = async (currency: string) => {
+    if (!user) return;
+    
+    setUser(prev => prev ? { ...prev, currency } : null);
+    
+    // Update in database
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ currency })
+        .eq('id', user.id);
+      
+      if (error) {
+        console.error('Error updating currency in database:', error);
+      }
+    } catch (error) {
+      console.error('Error updating currency:', error);
+    }
+  };
+
+  const claimDailyBonus = () => {
+    if (!user) return 0;
+    
+    const today = new Date().toDateString();
+    if (user.lastDailyBonus === today) return 0;
+    
+    const levelRewards = getLevelRewards(user.level);
+    const bonusAmount = levelRewards.dailyBonus;
+    
+    updateBalance(bonusAmount);
+    setUser(prev => prev ? { ...prev, lastDailyBonus: today } : null);
+    
+    // Update in database
+    supabase
+      .from('users')
+      .update({ last_daily_bonus: today })
+      .eq('id', user.id);
+    
+    return bonusAmount;
+  };
+
+  const getNextLevelRequirement = () => {
+    if (!user) return 100;
+    return user.level * 100;
+  };
+
+  const getLevelRewards = (level: number) => {
+    const baseBonus = 25;
+    const bonusIncrease = 20;
+    const dailyBonus = baseBonus + (level - 1) * bonusIncrease;
+    
+    const titles = [
+      'Novice Gambler',
+      'Casual Player', 
+      'Regular Gambler',
+      'Experienced Player',
+      'Skilled Gambler',
+      'Expert Player',
+      'Professional Gambler',
+      'High Roller',
+      'VIP Player',
+      'Elite Gambler',
+      'Master Player',
+      'Legendary Gambler',
+      'Casino Legend',
+      'Gambling Guru',
+      'Fortune Master',
+      'Luck Legend'
+    ];
+    
+    const titleIndex = Math.min(Math.floor((level - 1) / 3), titles.length - 1);
+    
+    return {
+      title: titles[titleIndex],
+      dailyBonus
+    };
+  };
         password,
       });
 
