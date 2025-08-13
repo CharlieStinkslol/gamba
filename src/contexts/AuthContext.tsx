@@ -199,22 +199,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Get user by username to find their email
-      const { data: userCheck, error: userCheckError } = await supabase
+      // Get user by username
+      const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('id, username')
+        .select('*')
         .eq('username', username)
         .single();
 
-      if (userCheckError) {
-        throw new Error('Username does not exist');
+      if (userError || !userData) {
+        return false;
       }
       
-      // Get the auth user's email to sign in
-      const { data: authUser, error: authError } = await supabase.auth.getUser();
-      
-      // We need to get the email from the auth.users table
-      // For now, we'll generate the same email format used during registration
+      // Generate the same email format used during registration
       const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
       const userEmail = `${sanitizedUsername}@test.com`;
       
@@ -224,11 +220,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        throw new Error('Invalid username or password');
+        return false;
       }
+      
+      // Load user profile after successful login
+      await hydrateProfile(userData.id);
+      return true;
     } catch (e: any) {
       setError(e?.message ?? 'Could not sign in.');
-      throw e;
+      return false;
     }
   };
 
@@ -250,7 +250,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const formatCurrency = (amount: number) => {
-    return `$${amount.toFixed(2)}`;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: user?.currency || 'USD',
+    }).format(amount);
   };
 
   const updateBalance = (amount: number) => {
@@ -266,11 +269,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         totalBets: user.stats.totalBets + 1,
         totalWagered: user.stats.totalWagered + betAmount,
         totalWon: user.stats.totalWon + winAmount,
-        totalWins: winAmount > 0 ? user.stats.totalWins + 1 : user.stats.totalWins,
-        totalLosses: winAmount === 0 ? user.stats.totalLosses + 1 : user.stats.totalLosses,
-        biggestWin: Math.max(user.stats.biggestWin, winAmount),
-        biggestLoss: winAmount === 0 ? Math.max(user.stats.biggestLoss, betAmount) : user.stats.biggestLoss
       };
+      
+      if (winAmount > 0) {
+        newStats.totalWins = user.stats.totalWins + 1;
+        if (winAmount > user.stats.biggestWin) {
+          newStats.biggestWin = winAmount;
+        }
+      } else {
+        newStats.totalLosses = user.stats.totalLosses + 1;
+        if (betAmount > user.stats.biggestLoss) {
+          newStats.biggestLoss = betAmount;
+        }
+      }
+      
       setUser({ ...user, stats: newStats });
     }
   };
@@ -282,15 +294,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const claimDailyBonus = () => {
-    return 100;
+    const bonusAmount = 100;
+    if (user) {
+      setUser({ 
+        ...user, 
+        balance: user.balance + bonusAmount,
+        lastDailyBonus: new Date().toISOString()
+      });
+    }
+    return bonusAmount;
   };
 
   const getNextLevelRequirement = () => {
-    return 1000;
+    if (!user) return 0;
+    return user.level * 1000;
   };
 
   const getLevelRewards = (level: number) => {
-    return { title: `Level ${level}`, dailyBonus: level * 10 };
+    return {
+      title: `Level ${level} Player`,
+      dailyBonus: level * 50
+    };
   };
 
   const value = useMemo<AuthContextType>(
