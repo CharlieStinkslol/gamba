@@ -9,16 +9,16 @@ const LoadingScreen = () => {
           <Loader2 className="w-8 h-8 text-white animate-spin" />
         </div>
         <h2 className="text-2xl font-bold text-white mb-4">Loading CharliesOdds</h2>
-        <p className="text-gray-400 mb-6">Setting up your gaming environment...</p>
+        <p className="text-gray-400 mb-6">Getting things ready…</p>
         
         <div className="bg-gray-800 rounded-lg p-6 max-w-md mx-auto">
-          <h3 className="text-white font-semibold mb-3">Demo Casino Platform</h3>
+          <h3 className="text-white font-semibold mb-3">Loading</h3>
           <p className="text-gray-300 text-sm mb-4">
-            CharliesOdds is a fully client-side demo casino. All your data is stored locally in your browser.
+            Your experience is starting up.
           </p>
           <div className="bg-blue-900 border border-blue-600 rounded-lg p-3">
             <p className="text-blue-200 text-xs">
-              No external database required - everything runs in your browser for maximum privacy and speed.
+              This may take a moment.
             </p>
           </div>
         </div>
