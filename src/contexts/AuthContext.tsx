@@ -103,7 +103,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       // Generate dummy email for Supabase auth
-      const dummyEmail = `${username}@test.com`;
+      // Generate a valid email format that Supabase will accept
+      const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const dummyEmail = `${sanitizedUsername}${Date.now()}@test.com`;
       
       // First check if username exists in our users table
       const { data: userCheck, error: userCheckError } = await supabase
@@ -173,6 +175,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // User exists, try to sign in
+        const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const dummyEmail = `${sanitizedUsername}${Date.now()}@test.com`;
+        
         const { data, error } = await supabase.auth.signInWithPassword({
           email: dummyEmail,
           password,
