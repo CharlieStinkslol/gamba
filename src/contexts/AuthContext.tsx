@@ -150,9 +150,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (email: string, username: string, password: string) => {
     setError(null);
     try {
-      const { data: authData } = await registerUser(email, password);
+      const authData = await registerUser(email, password);
       
-      if (authData.user) {
+      if (authData?.user) {
         // Create user profile in users table
         const { error: userError } = await supabase
           .from('users')
@@ -189,8 +189,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Load the complete user profile after creation
         await hydrateProfile(authData.user.id);
+      } else {
+        throw new Error('Registration failed - no user data returned');
       }
     } catch (e: any) {
+      console.error('Registration error:', e);
       setError(e?.message ?? 'Could not register.');
       throw e;
     }
