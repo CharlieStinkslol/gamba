@@ -168,6 +168,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userError) {
           throw userError;
         }
+
+        // Create initial user stats record
+        const { error: statsError } = await supabase
+          .from('user_stats')
+          .insert({
+            user_id: authData.user.id,
+            total_bets: 0,
+            total_wins: 0,
+            total_losses: 0,
+            total_wagered: 0,
+            total_won: 0,
+            biggest_win: 0,
+            biggest_loss: 0
+          });
+
+        if (statsError) {
+          console.error('Error creating user stats:', statsError);
+        }
+
+        // Load the complete user profile after creation
+        await hydrateProfile(authData.user.id);
       } else {
         throw new Error('Registration failed - no user data returned');
       }
@@ -181,39 +202,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // First check if user exists with this username
+      // Get user by username
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('id, username')
+        .select('*')
         .eq('username', username)
         .single();
 
       if (userError || !userData) {
-        setError('Invalid username or password');
         return false;
       }
-
-      // Generate email from username for Supabase auth
+      
+      // Generate the same email format used during registration
       const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
       const userEmail = `${sanitizedUsername}@test.com`;
-
-      // Try to sign in with Supabase auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: userEmail,
         password,
       });
 
-      if (authError) {
-        setError('Invalid username or password');
+      if (error) {
         return false;
       }
-
-      // Load complete user profile with stats
+      
+      // Load user profile after successful login
       await hydrateProfile(userData.id);
       return true;
     } catch (e: any) {
-      console.error('Login error:', e);
-      setError('Login failed. Please try again.');
+      setError(e?.message ?? 'Could not sign in.');
       return false;
     }
   };
@@ -257,18 +274,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const newBalance = user.balance + amount;
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
     
-    // Update in database and wait for completion
+    // Update in database
     supabase
       .from('users')
       .update({ balance: newBalance })
-      .eq('id', user.id)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Error updating balance in database:', error);
-          // Revert local state if database update fails
-          setUser(prev => prev ? { ...prev, balance: user.balance } : null);
-        }
-      });
+      .eq('id', user.id);
   };
 
   const updateStats = (betAmount: number, winAmount: number) => {
@@ -289,11 +299,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     setUser(prev => prev ? { ...prev, stats: newStats } : null);
     
-    // Update in database and wait for completion
+    // Update in database
     supabase
       .from('user_stats')
-      .upsert({
-        user_id: user.id,
+      .update({
         total_bets: newStats.totalBets,
         total_wins: newStats.totalWins,
         total_losses: newStats.totalLosses,
@@ -302,12 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         biggest_win: newStats.biggestWin,
         biggest_loss: newStats.biggestLoss
       })
-      .eq('user_id', user.id)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Error updating stats in database:', error);
-        }
-      });
+      .eq('user_id', user.id);
   };
 
   const setCurrency = (currency: string) => {

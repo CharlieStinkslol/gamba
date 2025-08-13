@@ -2,16 +2,6 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState,
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
-interface Bet {
-  id: string;
-  game: string;
-  betAmount: number;
-  winAmount: number;
-  multiplier: number;
-  timestamp: Date;
-  result: any;
-}
-
 type GameSettings = {
   minBet: number;
   maxBet: number;
@@ -31,11 +21,6 @@ type GameContextType = {
   suggestions: Suggestion[];
   addSuggestion: (text: string) => Promise<void>;
   reloadSuggestions: () => Promise<void>;
-  bets: Bet[];
-  addBet: (bet: Omit<Bet, 'id' | 'timestamp'>) => void;
-  seed: string;
-  setSeed: (seed: string) => void;
-  generateSeededRandom: () => number;
 };
 
 const defaultSettings: GameSettings = {
@@ -57,52 +42,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [settings, setSettings] = useState<GameSettings>(defaultSettings);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [bets, setBets] = useState<Bet[]>([]);
-  const [seed, setSeed] = useState<string>('default-seed');
   // remember which column name actually holds the suggestion text
   const textColRef = useRef<string | null>(null);
-
-  const addBet = async (bet: Omit<Bet, 'id' | 'timestamp'>) => {
-    const newBet: Bet = {
-      ...bet,
-      id: Math.random().toString(36).substring(2, 15),
-      timestamp: new Date()
-    };
-    setBets(prev => [newBet, ...prev]);
-    
-    // Save bet to database if user is logged in
-    if (user) {
-      try {
-        const { error } = await supabase
-          .from('bets')
-          .insert({
-            user_id: user.id,
-            game: bet.game,
-            bet_amount: bet.betAmount,
-            win_amount: bet.winAmount,
-            multiplier: bet.multiplier,
-            result: bet.result
-          });
-        
-        if (error) {
-          console.error('Error saving bet to database:', error);
-        }
-      } catch (error) {
-        console.error('Error saving bet:', error);
-      }
-    }
-  };
-
-  const generateSeededRandom = (): number => {
-    // Simple seeded random number generator
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      const char = seed.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash) / 2147483647;
-  };
 
   // --- Game settings load/seed (robust to different column names and empty table)
   useEffect(() => {
@@ -244,19 +185,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo<GameContextType>(
-    () => ({ 
-      settings, 
-      setSettings, 
-      suggestions, 
-      addSuggestion, 
-      reloadSuggestions,
-      bets,
-      addBet,
-      seed,
-      setSeed,
-      generateSeededRandom
-    }),
-    [settings, suggestions, bets, seed]
+    () => ({ settings, setSettings, suggestions, addSuggestion, reloadSuggestions }),
+    [settings, suggestions]
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
