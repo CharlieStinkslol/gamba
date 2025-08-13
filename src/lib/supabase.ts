@@ -13,7 +13,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // No browser storage: session stays in memory only (no localStorage)
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    persistSession: true,
+    persistSession: false,
     autoRefreshToken: true,
     storage: undefined,
     detectSessionInUrl: true,
@@ -38,27 +38,28 @@ function looksLikeEmail(input: string): boolean {
 export async function registerUser(rawEmail: string, password: string) {
   const email = rawEmail; // Use the dummy email directly without validation
 
+  if (!password || password.length < 6) {
+    const error = new Error('Password must be at least 6 characters.') as AuthError;
+    (error as any).status = 400;
+    (error as any).name = 'AuthApiError';
+    throw error;
+  }
+
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: rawEmail,
     password,
+    // options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
   });
 
-  if (error) throw error;
-  return data; // { user, session }
+  if (error) {
+    throw error;
+  }
+
+  return data; // { user, session } (session may be null if confirmations are enabled)
 }
 
-/**
- * Sign in with email/password. You can pass either a real email,
- * or your app’s derived email (e.g., username@test.com).
- */
 export async function signInUser(rawEmail: string, password: string) {
-  const email = cleanEmail(rawEmail);
-  if (!looksLikeEmail(email)) {
-    const e = new Error('Email format looks wrong.') as AuthError;
-    // @ts-ignore
-    e.status = 422;
-    throw e;
-  }
+  const email = rawEmail; // Use the dummy email directly without validation
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
