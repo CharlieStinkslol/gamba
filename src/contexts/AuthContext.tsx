@@ -202,35 +202,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Get user by username
+      // First check if user exists with this username
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('*')
+        .select('id, username')
         .eq('username', username)
         .single();
 
       if (userError || !userData) {
+        setError('Invalid username or password');
         return false;
       }
-      
-      // Generate the same email format used during registration
+
+      // Generate email from username for Supabase auth
       const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
       const userEmail = `${sanitizedUsername}@test.com`;
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
+
+      // Try to sign in with Supabase auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: userEmail,
         password,
       });
 
-      if (error) {
+      if (authError) {
+        setError('Invalid username or password');
         return false;
       }
-      
-      // Load user profile after successful login
+
+      // Load complete user profile with stats
       await hydrateProfile(userData.id);
       return true;
     } catch (e: any) {
-      setError(e?.message ?? 'Could not sign in.');
+      console.error('Login error:', e);
+      setError('Login failed. Please try again.');
       return false;
     }
   };
