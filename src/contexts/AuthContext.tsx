@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('user_stats')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (userError || !userData) {
       console.error('Error loading user profile:', userError);

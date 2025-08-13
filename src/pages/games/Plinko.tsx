@@ -10,7 +10,7 @@ import SettingsManager from '../../components/SettingsManager';
 
 const Plinko = () => {
   const { user, updateBalance, updateStats, formatCurrency } = useAuth();
-  const { addBet, generateSeededRandom, bets } = useGame();
+  const { addBet, generateSeededRandom, bets, setSeed, seed } = useGame();
   const { isEnabled, isLoading, validateBetAmount } = useGameAccess('plinko');
   
   const [betAmount, setBetAmount] = useState(10);
@@ -35,6 +35,17 @@ const Plinko = () => {
   
   // UI states for draggable stats
   const [showLiveStats, setShowLiveStats] = useState(false);
+
+  const [newSeed, setNewSeed] = useState('');
+
+  // Load saved settings on component mount
+  useEffect(() => {
+    const savedSettings = JSON.parse(localStorage.getItem('charlies-odds-plinko-current-settings') || '{}');
+    if (savedSettings.betAmount) setBetAmount(savedSettings.betAmount);
+    if (savedSettings.maxAutoBets) setMaxAutoBets(savedSettings.maxAutoBets);
+    if (savedSettings.infiniteBet !== undefined) setInfiniteBet(savedSettings.infiniteBet);
+    if (savedSettings.instantBet !== undefined) setInstantBet(savedSettings.instantBet);
+  }, []);
 
   const [sessionStats, setSessionStats] = useState({
     totalBets: 0,
@@ -194,7 +205,7 @@ const Plinko = () => {
       infiniteBet,
       instantBet
     };
-    saveGameSettings('plinko', settings);
+    localStorage.setItem('charlies-odds-plinko-current-settings', JSON.stringify(settings));
   };
 
   const loadSettings = (settings: any) => {

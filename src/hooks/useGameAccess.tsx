@@ -10,11 +10,13 @@ import { supabase } from '../lib/supabase';
  *
  * No localStorage — reads from auth + a profile/flags table.
  */
-export function useGameAccess() {
+export function useGameAccess(gameName?: string) {
   const { user, loading } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
   const [canPlay, setCanPlay] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
@@ -25,26 +27,28 @@ export function useGameAccess() {
         setIsAdmin(false);
         setCanPlay(false);
         setChecking(false);
+        setIsLoading(false);
         return;
       }
 
-      // Example flags table: profiles(id, role, banned, kyc_passed)
+      // Use users table instead of non-existent profiles table
       const { data, error } = await supabase
-        .from('profiles')
-        .select('role,banned,kyc_passed')
+        .from('users')
+        .select('is_admin')
         .eq('id', user.id)
         .single();
 
       if (!mounted) return;
 
       if (error || !data) {
-        setIsAdmin(Boolean(user.role === 'admin'));
+        setIsAdmin(Boolean(user.isAdmin));
         setCanPlay(true);
       } else {
-        setIsAdmin(data.role === 'admin');
-        setCanPlay(!data.banned && Boolean(data.kyc_passed ?? true));
+        setIsAdmin(data.is_admin);
+        setCanPlay(true); // Default to true since banned/kyc_passed don't exist
       }
       setChecking(false);
+      setIsLoading(false);
     };
 
     if (!loading) run();
@@ -54,10 +58,22 @@ export function useGameAccess() {
     };
   }, [user, loading]);
 
+  const validateBetAmount = (amount: number) => {
+    if (amount <= 0) {
+      return { isValid: false, message: 'Bet amount must be greater than 0' };
+    }
+    if (!user || amount > user.balance) {
+      return { isValid: false, message: 'Insufficient balance' };
+    }
+    return { isValid: true };
+  };
   return {
     isLoggedIn: Boolean(user),
     isAdmin,
     canPlay,
     checking,
+    isEnabled,
+    isLoading,
+    validateBetAmount,
   };
 }

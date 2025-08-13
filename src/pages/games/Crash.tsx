@@ -10,7 +10,7 @@ import SettingsManager from '../../components/SettingsManager';
 
 const Crash = () => {
   const { user, updateBalance, formatCurrency } = useAuth();
-  const { addBet, generateSeededRandom, saveGameSettings, loadGameSettings, bets, setSeed, seed } = useGame();
+  const { addBet, generateSeededRandom, bets, setSeed, seed } = useGame();
   const { isEnabled, isLoading, validateBetAmount } = useGameAccess('crash');
   
   const [betAmount, setBetAmount] = useState(10);
@@ -77,7 +77,7 @@ const Crash = () => {
 
   // Load saved settings on component mount
   useEffect(() => {
-    const savedSettings = loadGameSettings('crash');
+    const savedSettings = JSON.parse(localStorage.getItem('charlies-odds-crash-current-settings') || '{}');
     if (savedSettings.betAmount) setBetAmount(savedSettings.betAmount);
     if (savedSettings.autoCashout) setAutoCashout(savedSettings.autoCashout);
     if (savedSettings.strategy) setStrategy(savedSettings.strategy);
@@ -367,7 +367,7 @@ const Crash = () => {
       stopLossAmount,
       martingaleMultiplier
     };
-    saveGameSettings('crash', settings);
+    localStorage.setItem('charlies-odds-crash-current-settings', JSON.stringify(settings));
   };
 
   const loadSettings = (settings: any) => {

@@ -10,7 +10,7 @@ import SettingsManager from '../../components/SettingsManager';
 
 const Limbo = () => {
   const { user, updateBalance, formatCurrency } = useAuth();
-  const { addBet, generateSeededRandom, saveGameSettings, loadGameSettings, bets, setSeed, seed } = useGame();
+  const { addBet, generateSeededRandom, bets, setSeed, seed } = useGame();
   const { isEnabled, isLoading, validateBetAmount } = useGameAccess('limbo');
   
   const [betAmount, setBetAmount] = useState(10);
@@ -75,7 +75,7 @@ const Limbo = () => {
 
   // Load saved settings on component mount
   useEffect(() => {
-    const savedSettings = loadGameSettings('limbo');
+    const savedSettings = JSON.parse(localStorage.getItem('charlies-odds-limbo-current-settings') || '{}');
     if (savedSettings.betAmount) setBetAmount(savedSettings.betAmount);
     if (savedSettings.targetMultiplier) setTargetMultiplier(savedSettings.targetMultiplier);
     if (savedSettings.strategy) setStrategy(savedSettings.strategy);
@@ -334,7 +334,7 @@ const Limbo = () => {
       stopLossAmount,
       martingaleMultiplier
     };
-    saveGameSettings('limbo', settings);
+    localStorage.setItem('charlies-odds-limbo-current-settings', JSON.stringify(settings));
   };
 
   const loadSettings = (settings: any) => {

@@ -16,7 +16,7 @@ interface Card {
 
 const Blackjack = () => {
   const { user, updateBalance, formatCurrency } = useAuth();
-  const { addBet, generateSeededRandom, saveGameSettings, loadGameSettings, bets, setSeed, seed } = useGame();
+  const { addBet, generateSeededRandom, bets, setSeed, seed } = useGame();
   const { isEnabled, isLoading, validateBetAmount } = useGameAccess('blackjack');
   
   const [betAmount, setBetAmount] = useState(10);
@@ -91,7 +91,7 @@ const Blackjack = () => {
 
   // Load saved settings on component mount
   useEffect(() => {
-    const savedSettings = loadGameSettings('blackjack');
+    const savedSettings = JSON.parse(localStorage.getItem('charlies-odds-blackjack-current-settings') || '{}');
     if (savedSettings.betAmount) setBetAmount(savedSettings.betAmount);
     if (savedSettings.strategy) setStrategy(savedSettings.strategy);
     if (savedSettings.onWin) setOnWin(savedSettings.onWin);
@@ -493,7 +493,7 @@ const Blackjack = () => {
       stopLossAmount,
       martingaleMultiplier
     };
-    saveGameSettings('blackjack', settings);
+    localStorage.setItem('charlies-odds-blackjack-current-settings', JSON.stringify(settings));
   };
 
   const loadSettings = (settings: any) => {

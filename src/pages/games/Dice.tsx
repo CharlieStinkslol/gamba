@@ -10,7 +10,7 @@ import SettingsManager from '../../components/SettingsManager';
 
 const Dice = () => {
   const { user, updateBalance, updateStats, formatCurrency } = useAuth();
-  const { addBet, generateSeededRandom, saveGameSettings, loadGameSettings, bets, setSeed, seed } = useGame();
+  const { addBet, generateSeededRandom, bets, setSeed, seed } = useGame();
   const { isEnabled, isLoading, validateBetAmount } = useGameAccess('dice');
   
   const [betAmount, setBetAmount] = useState(10);
@@ -78,7 +78,7 @@ const Dice = () => {
 
   // Load saved settings on component mount
   useEffect(() => {
-    const savedSettings = loadGameSettings('dice');
+    const savedSettings = JSON.parse(localStorage.getItem('charlies-odds-dice-current-settings') || '{}');
     if (savedSettings.betAmount) setBetAmount(savedSettings.betAmount);
     if (savedSettings.winChance) setWinChance(savedSettings.winChance);
     if (savedSettings.rollType) setRollType(savedSettings.rollType);
@@ -351,7 +351,7 @@ const Dice = () => {
       stopLossAmount,
       martingaleMultiplier
     };
-    saveGameSettings('dice', settings);
+    localStorage.setItem('charlies-odds-dice-current-settings', JSON.stringify(settings));
   };
 
   const loadSettings = (settings: any) => {
