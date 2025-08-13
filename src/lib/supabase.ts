@@ -36,14 +36,7 @@ function looksLikeEmail(input: string): boolean {
 }
 
 export async function registerUser(rawEmail: string, password: string) {
-  const email = cleanEmail(rawEmail);
-
-  if (!looksLikeEmail(email)) {
-    const error = new Error('Please enter a valid email address.') as AuthError;
-    (error as any).status = 400;
-    (error as any).name = 'AuthApiError';
-    throw error;
-  }
+  const email = rawEmail; // Use the dummy email directly without validation
 
   if (!password || password.length < 6) {
     const error = new Error('Password must be at least 6 characters.') as AuthError;
@@ -53,18 +46,12 @@ export async function registerUser(rawEmail: string, password: string) {
   }
 
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: rawEmail,
     password,
     // options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
   });
 
   if (error) {
-    if ((error as any).code === 'email_address_invalid') {
-      const pretty = new Error('Please enter a valid email address.') as AuthError;
-      (pretty as any).status = error.status ?? 400;
-      (pretty as any).name = error.name ?? 'AuthApiError';
-      throw pretty;
-    }
     throw error;
   }
 
@@ -72,14 +59,7 @@ export async function registerUser(rawEmail: string, password: string) {
 }
 
 export async function signInUser(rawEmail: string, password: string) {
-  const email = cleanEmail(rawEmail);
-
-  if (!looksLikeEmail(email)) {
-    const error = new Error('Please enter a valid email address.') as AuthError;
-    (error as any).status = 400;
-    (error as any).name = 'AuthApiError';
-    throw error;
-  }
+  const email = rawEmail; // Use the dummy email directly without validation
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
