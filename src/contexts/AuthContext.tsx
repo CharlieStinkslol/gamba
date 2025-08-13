@@ -181,10 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     setError(null);
     try {
-      // Simple username/password check against users table
+      // First check if user exists with this username
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('*')
+        .select('id, username')
         .eq('username', username)
         .single();
 
@@ -193,54 +193,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      // For demo purposes, we'll just check if password matches a simple hash
-      // In a real app, you'd use proper password hashing
-      const expectedPassword = `${username}123`; // Simple demo password
-      if (password !== expectedPassword) {
+      // Generate email from username for Supabase auth
+      const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const userEmail = `${sanitizedUsername}@test.com`;
+
+      // Try to sign in with Supabase auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
+
+      if (authError) {
         setError('Invalid username or password');
         return false;
       }
 
-      // Get user stats
-      const { data: statsData } = await supabase
-        .from('user_stats')
-        .select('*')
-        .eq('user_id', userData.id)
-        .maybeSingle();
-
-      // Set complete user object
-      const userObject = {
-        id: userData.id,
-        email: userData.email || null,
-        username: userData.username,
-        balance: userData.balance || 1000,
-        level: userData.level || 1,
-        experience: userData.experience || 0,
-        currency: userData.currency || 'USD',
-        isAdmin: userData.is_admin || false,
-        createdAt: userData.created_at,
-        updatedAt: userData.updated_at,
-        lastDailyBonus: userData.last_daily_bonus,
-        stats: statsData ? {
-          totalBets: statsData.total_bets || 0,
-          totalWins: statsData.total_wins || 0,
-          totalLosses: statsData.total_losses || 0,
-          totalWagered: statsData.total_wagered || 0,
-          totalWon: statsData.total_won || 0,
-          biggestWin: statsData.biggest_win || 0,
-          biggestLoss: statsData.biggest_loss || 0
-        } : {
-          totalBets: 0,
-          totalWins: 0,
-          totalLosses: 0,
-          totalWagered: 0,
-          totalWon: 0,
-          biggestWin: 0,
-          biggestLoss: 0
-        }
-      };
-
-      setUser(userObject);
+      // Load complete user profile with stats
+      await hydrateProfile(userData.id);
       return true;
     } catch (e: any) {
       console.error('Login error:', e);
@@ -252,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     setError(null);
     try {
+      await signOutUser();
       setUser(null);
     } catch (e: any) {
       setError(e?.message ?? 'Could not sign out.');
@@ -260,44 +230,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshProfile = async () => {
-    if (!user) return;
-    
-    // Reload user data from database
-    const { data: userData } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    const { data: statsData } = await supabase
-      .from('user_stats')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (userData) {
-      setUser({
-        ...user,
-        balance: userData.balance,
-        level: userData.level,
-        experience: userData.experience,
-        stats: statsData ? {
-          totalBets: statsData.total_bets || 0,
-          totalWins: statsData.total_wins || 0,
-          totalLosses: statsData.total_losses || 0,
-          totalWagered: statsData.total_wagered || 0,
-          totalWon: statsData.total_won || 0,
-          biggestWin: statsData.biggest_win || 0,
-          biggestLoss: statsData.biggest_loss || 0
-        } : user.stats
-      });
-    }
+    const { data } = await supabase.auth.getUser();
+    const u = data.user;
+    if (u) await hydrateProfile(u.id);
   };
-
-  // Remove the hydrateProfile function and auth state listener
-  useEffect(() => {
-    setLoading(false);
-  }, []);
 
   const formatCurrency = (amount: number) => {
     if (!user) return '$0.00';
@@ -315,34 +251,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return `${symbol}${amount.toFixed(2)}`;
   };
 
-  const updateBalance = async (amount: number) => {
+  const updateBalance = (amount: number) => {
     if (!user) return;
     
     const newBalance = user.balance + amount;
-    
-    // Update local state immediately
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
     
-    // Update in database
-    try {
-      const { error } = await supabase
-        .from('users')
-        .update({ balance: newBalance })
-        .eq('id', user.id);
-      
-      if (error) {
-        console.error('Error updating balance in database:', error);
-        // Revert local state if database update fails
-        setUser(prev => prev ? { ...prev, balance: user.balance } : null);
-      }
-    } catch (error) {
-      console.error('Error updating balance:', error);
-      // Revert local state if database update fails
-      setUser(prev => prev ? { ...prev, balance: user.balance } : null);
-    }
+    // Update in database and wait for completion
+    supabase
+      .from('users')
+      .update({ balance: newBalance })
+      .eq('id', user.id)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error updating balance in database:', error);
+          // Revert local state if database update fails
+          setUser(prev => prev ? { ...prev, balance: user.balance } : null);
+        }
+      });
   };
 
-  const updateStats = async (betAmount: number, winAmount: number) => {
+  const updateStats = (betAmount: number, winAmount: number) => {
     if (!user) return;
     
     const isWin = winAmount > betAmount;
@@ -358,55 +287,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       biggestLoss: Math.min(user.stats.biggestLoss, profit)
     };
     
-    // Update local state immediately
     setUser(prev => prev ? { ...prev, stats: newStats } : null);
     
-    // Update in database
-    try {
-      const { error } = await supabase
-        .from('user_stats')
-        .upsert({
-          user_id: user.id,
-          total_bets: newStats.totalBets,
-          total_wins: newStats.totalWins,
-          total_losses: newStats.totalLosses,
-          total_wagered: newStats.totalWagered,
-          total_won: newStats.totalWon,
-          biggest_win: newStats.biggestWin,
-          biggest_loss: newStats.biggestLoss
-        })
-        .eq('user_id', user.id);
-      
-      if (error) {
-        console.error('Error updating stats in database:', error);
-        // Revert local state if database update fails
-        setUser(prev => prev ? { ...prev, stats: user.stats } : null);
-      }
-    } catch (error) {
-      console.error('Error updating stats:', error);
-      // Revert local state if database update fails
-      setUser(prev => prev ? { ...prev, stats: user.stats } : null);
-    }
+    // Update in database and wait for completion
+    supabase
+      .from('user_stats')
+      .upsert({
+        user_id: user.id,
+        total_bets: newStats.totalBets,
+        total_wins: newStats.totalWins,
+        total_losses: newStats.totalLosses,
+        total_wagered: newStats.totalWagered,
+        total_won: newStats.totalWon,
+        biggest_win: newStats.biggestWin,
+        biggest_loss: newStats.biggestLoss
+      })
+      .eq('user_id', user.id)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error updating stats in database:', error);
+        }
+      });
   };
 
-  const setCurrency = async (currency: string) => {
+  const setCurrency = (currency: string) => {
     if (!user) return;
     
     setUser(prev => prev ? { ...prev, currency } : null);
     
     // Update in database
-    try {
-      const { error } = await supabase
-        .from('users')
-        .update({ currency })
-        .eq('id', user.id);
-      
-      if (error) {
-        console.error('Error updating currency in database:', error);
-      }
-    } catch (error) {
-      console.error('Error updating currency:', error);
-    }
+    supabase
+      .from('users')
+      .update({ currency })
+      .eq('id', user.id);
   };
 
   const claimDailyBonus = () => {
